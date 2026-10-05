@@ -22,7 +22,6 @@ opt-level = 3
 package = "com.velora.player"
 apk_name = "Velora"
 build_targets = ["aarch64-linux-android"]
-resources = "res"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26
@@ -30,7 +29,6 @@ target_sdk_version = 34
 
 [package.metadata.android.application]
 label = "Velora"
-icon = "@mipmap/ic_launcher"
 
 [[package.metadata.android.uses_permission]]
 name = "android.permission.READ_MEDIA_AUDIO"
