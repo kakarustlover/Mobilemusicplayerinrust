@@ -1024,11 +1024,14 @@ fn ask_permission(app: &AndroidApp) {
 
 #[no_mangle]
 fn android_main(app: AndroidApp) {
+    use winit::platform::android::EventLoopBuilderExtAndroid;
     android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info));
     ask_permission(&app);
     let handle = app.clone();
     let options = eframe::NativeOptions {
-        android_app: Some(app),
+        event_loop_builder: Some(Box::new(move |builder| {
+            builder.with_android_app(app);
+        })),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
