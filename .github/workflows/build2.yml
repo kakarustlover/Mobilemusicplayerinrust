@@ -48,6 +48,10 @@ jobs:
           cp $HOME/.android/debug.keystore '$HOME/.android/debug.keystore'
 
       - name: Build release APK
+        env:
+          # Link the C++ ABI runtime statically so libvelora.so finds
+          # symbols like __cxa_pure_virtual at runtime on the phone.
+          RUSTFLAGS: "-C link-arg=-lc++abi"
         run: cargo apk build --release
 
       - uses: actions/upload-artifact@v4
