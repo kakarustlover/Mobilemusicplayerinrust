@@ -42,6 +42,10 @@ jobs:
             -storepass android -keypass android -alias androiddebugkey \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
+          # cargo-apk does not expand $HOME in Cargo.toml and reads the path
+          # relative to the project folder, so place a copy at that literal path.
+          mkdir -p '$HOME/.android'
+          cp $HOME/.android/debug.keystore '$HOME/.android/debug.keystore'
 
       - name: Build release APK
         run: cargo apk build --release
