@@ -27,9 +27,7 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # ✅ FIX: اکشن setup-android کلاً حذف شد — روی RUNNER گیت‌هاب SDK از قبل نصبه.
-      # مستقیم NDK و پلتفرم رو خودمون نصب می‌کنیم.
-            - name: Install NDK + platform
+      - name: Install NDK + platform
         run: |
           set -e
           SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
@@ -42,18 +40,6 @@ jobs:
 
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
-        run: |
-          set -e
-          VER=v0.17.0
-          if curl -fsSL "https://github.com/rust-mobile/cargo-apk/releases/download/${VER}/cargo-apk-${VER}-x86_64-unknown-linux-musl.tar.gz" -o /tmp/ca.tgz; then
-            tar -xzf /tmp/ca.tgz -C /tmp
-            sudo install /tmp/cargo-apk /usr/local/bin/cargo-apk
-            echo "prebuilt cargo-apk installed"
-          else
-            echo "prebuilt not found — compiling from source"
-            cargo install cargo-apk --locked
-          fi
-          cargo apk --version
 
       - name: Build release APK
         run: cargo apk build --release
