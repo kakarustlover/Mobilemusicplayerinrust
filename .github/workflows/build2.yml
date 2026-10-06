@@ -27,6 +27,17 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # فونت‌ها اگر در ریپو نباشند دانلود می‌شوند (Inter + Vazirmatn برای متن فارسی)
+      - name: Fetch fonts (skip if already in repo)
+        run: |
+          mkdir -p assets/fonts
+          base="https://cdn.jsdelivr.net/fontsource/fonts"
+          [ -f assets/fonts/Inter-Regular.ttf ]   || curl -fsSL -o assets/fonts/Inter-Regular.ttf   "$base/inter@latest/latin-400-normal.ttf"
+          [ -f assets/fonts/Inter-SemiBold.ttf ]  || curl -fsSL -o assets/fonts/Inter-SemiBold.ttf  "$base/inter@latest/latin-600-normal.ttf"
+          [ -f assets/fonts/Inter-ExtraBold.ttf ] || curl -fsSL -o assets/fonts/Inter-ExtraBold.ttf "$base/inter@latest/latin-800-normal.ttf"
+          [ -f assets/fonts/Vazirmatn-Regular.ttf ] || curl -fsSL -o assets/fonts/Vazirmatn-Regular.ttf "$base/vazirmatn@latest/arabic-400-normal.ttf"
+          ls -la assets/fonts
+
       - name: Install NDK + platform
         run: |
           set -e
