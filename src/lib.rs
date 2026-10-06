@@ -72,7 +72,7 @@ struct Song {
     dur: f32,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Tab {
     Songs = 0,
     Albums,
@@ -80,7 +80,7 @@ enum Tab {
     Playlist,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Pal {
     Pearl,
     Sky,
@@ -170,7 +170,6 @@ fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let f = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Color32::from_rgba_premultiplied(f(a.r(), b.r()), f(a.g(), b.g()), f(a.b(), b.b()), f(a.a(), b.a()))
 }
-/// Position of `p` along a CSS linear-gradient(<deg>) over `rect` (0..1).
 fn lin_t(rect: Rect, deg: f32, p: Pos2) -> f32 {
     let a = deg.to_radians();
     let d = vec2(a.sin(), -a.cos());
@@ -258,7 +257,6 @@ fn outline_pts(rect: Rect, r: f32) -> Vec<Pos2> {
     v
 }
 
-/// Rounded-rect filled with a per-vertex colour (single fan mesh — cheap).
 fn grad(p: &Painter, rect: Rect, r: f32, f: &dyn Fn(Pos2) -> Color32) {
     let pts = outline_pts(rect, r);
     let c = rect.center();
@@ -298,7 +296,6 @@ fn radial(p: &Painter, ce: Pos2, rx: f32, ry: f32, col: Color32) {
     p.add(Shape::mesh(m));
 }
 
-/// Soft multi-layer shadow (no textures — cheap and stable).
 fn soft_shadow(p: &Painter, rect: Rect, r: f32, dy: f32, blur: f32, base: Color32, a: f32) {
     if a <= 0.005 {
         return;
@@ -331,7 +328,6 @@ fn tex_round(p: &Painter, id: TextureId, rect: Rect, r: f32) {
     p.add(Shape::mesh(m));
 }
 
-/// Glass card: shadow + translucent gradient with folded top-gloss + hairline border.
 fn glass(p: &Painter, rect: Rect, r: f32, c: C, a: f32) {
     soft_shadow(p, rect, r, 5., 14., c.shb, c.sh_a * a);
     grad(p, rect, r, &|q| {
@@ -345,7 +341,6 @@ fn glass(p: &Painter, rect: Rect, r: f32, c: C, a: f32) {
     p.rect_stroke(rect.shrink(0.5), (r - 0.5).max(0.), Stroke::new(1., fade(c.gb, a)));
 }
 
-/// Accent gradient pill/button with glow.
 fn accent(p: &Painter, rect: Rect, r: f32, c: C) {
     soft_shadow(p, rect, r, 5., 12., c.glow, c.glow_a);
     grad(p, rect, r, &|q| {
@@ -356,7 +351,6 @@ fn accent(p: &Painter, rect: Rect, r: f32, c: C) {
     p.rect_stroke(rect.shrink(0.5), (r - 0.5).max(0.), Stroke::new(1., wa(0.55)));
 }
 
-/// Vinyl disc for songs without embedded cover art.
 fn disc(p: &Painter, ce: Pos2, d: f32, rot: f32, c: C) {
     let rect = Rect::from_center_size(ce, vec2(d, d));
     soft_shadow(p, rect, d / 2., 10., 20., c.shb, 0.4);
@@ -573,7 +567,6 @@ fn walk(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Android: scan storage in background; retry until permission is granted.
 #[cfg(target_os = "android")]
 fn spawn_scan() -> Receiver<Vec<Song>> {
     let (tx, rx) = channel();
@@ -645,7 +638,7 @@ fn spawn_scan() -> Receiver<Vec<Song>> {
     rx
 }
 
-// ---------------------------------------------------------------- audio (rodio everywhere)
+// ---------------------------------------------------------------- audio
 
 mod audio {
     use log::{info, warn};
@@ -721,7 +714,7 @@ fn jobj(v: jni::errors::Result<jni::objects::JValueOwned<'_>>) -> Option<jni::ob
 
 #[cfg(target_os = "android")]
 fn query_insets(app: &AndroidApp, ppp: f32) -> (f32, f32) {
-    let Ok(mut env) = app.vm().attach_current_thread() else { return (0., 0.); };
+    let Ok(env) = app.vm().attach_current_thread() else { return (0., 0.); };
     let Some(win) = jobj(env.call_method(app.activity(), "getWindow", "()Landroid/view/Window;", &[])) else { return (0., 0.); };
     let Some(dv) = jobj(env.call_method(&win, "getDecorView", "()Landroid/view/View;", &[])) else { return (0., 0.); };
     let Some(ins) = jobj(env.call_method(&dv, "getRootWindowInsets", "()Landroid/view/WindowInsets;", &[])) else { return (0., 0.); };
@@ -881,8 +874,6 @@ impl App {
         }
     }
 
-    // -------- playback core
-
     fn rnd(&mut self, n: usize) -> usize {
         let mut x = self.rng;
         x ^= x << 13;
@@ -950,7 +941,6 @@ impl App {
             self.loaded = Some(i);
             self.playing = true;
         } else {
-            // Demo tracks on desktop, or unreadable file → simulate so the UX stays alive.
             self.loaded = None;
             self.sim = true;
             self.sim_pos = 0.;
@@ -1066,8 +1056,6 @@ impl App {
         }
     }
 
-    // -------- library
-
     fn rebuild_groups(&mut self) {
         use std::collections::BTreeMap;
         let mut am: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -1126,7 +1114,6 @@ fn sense(on: bool) -> Sense {
     if on { Sense::click() } else { Sense::hover() }
 }
 
-/// Range slider with accent gradient fill. Returns (value, dragging, committed).
 fn slider(ui: &mut Ui, rect: Rect, v: f32, c: C, interactive: bool) -> (f32, bool, bool) {
     let resp = ui.allocate_rect(rect, if interactive { Sense::click_and_drag() } else { Sense::hover() });
     let p = ui.painter();
@@ -1168,10 +1155,10 @@ fn blobs(p: &Painter, area: Rect, now: f64, c: C) {
 
 fn empty_state(ui: &mut Ui, c: C) {
     let w = ui.available_width();
-    let resp = ui.allocate_exact_size(vec2(w, 170.), Sense::hover());
+    let (_, rect) = ui.allocate_exact_size(vec2(w, 170.), Sense::hover());
     let p = ui.painter();
-    icon(p, "note", pos2(resp.rect.center().x, resp.rect.center().y - 18.), 36., fade(c.mu, 0.9));
-    txt(p, pos2(resp.rect.center().x, resp.rect.center().y + 24.), Align2::CENTER_CENTER,
+    icon(p, "note", pos2(rect.center().x, rect.center().y - 18.), 36., fade(c.mu, 0.9));
+    txt(p, pos2(rect.center().x, rect.center().y + 24.), Align2::CENTER_CENTER,
         "Looking for music on your device…", f4(13.), c.mu);
 }
 
@@ -1277,8 +1264,7 @@ impl App {
         };
         let cov = self.covers.get(&i).map(|t| t.id());
         let is_cur = i == self.cur;
-        let resp = ui.allocate_exact_size(vec2(w, 66.), sense(on));
-        let r = resp.rect;
+        let (resp, r) = ui.allocate_exact_size(vec2(w, 66.), sense(on));
         let p = ui.painter();
         if is_cur {
             p.rect_filled(r, 16., c.hl);
@@ -1341,14 +1327,14 @@ impl App {
                         } else {
                             (self.albums[di].0.clone(), self.albums[di].1.clone())
                         };
-                        let hr = ui.allocate_exact_size(vec2(w, 42.), sense(on));
+                        let (hdr, hr) = ui.allocate_exact_size(vec2(w, 42.), sense(on));
                         let p = ui.painter();
-                        icon(p, "back", pos2(hr.rect.left() + 14., hr.rect.center().y), 18., c.tx);
-                        txt(p, pos2(hr.rect.left() + 34., hr.rect.center().y), Align2::LEFT_CENTER,
+                        icon(p, "back", pos2(hr.left() + 14., hr.center().y), 18., c.tx);
+                        txt(p, pos2(hr.left() + 34., hr.center().y), Align2::LEFT_CENTER,
                             ellip(p, &name, f6(17.), w - 120.), f6(17.), c.tx);
-                        txt(p, pos2(hr.rect.right(), hr.rect.center().y), Align2::RIGHT_CENTER,
+                        txt(p, pos2(hr.right(), hr.center().y), Align2::RIGHT_CENTER,
                             format!("{} tracks", idxs.len()), f4(11.5), c.mu);
-                        if on && hr.clicked() {
+                        if on && hdr.clicked() {
                             self.drill = None;
                             info!("drill: back");
                         }
@@ -1368,8 +1354,7 @@ impl App {
                         let cw = (w - 10.) / 2.;
                         for chunk in cards.chunks(2) {
                             for (name, gi, cov) in chunk {
-                                let resp = ui.allocate_exact_size(vec2(cw, 158.), sense(on));
-                                let r = resp.rect;
+                                let (resp, r) = ui.allocate_exact_size(vec2(cw, 158.), sense(on));
                                 let p = ui.painter();
                                 glass(p, r, 18., c, 1.);
                                 let tr = Rect::from_center_size(pos2(r.center().x, r.top() + 50.), vec2(72., 72.));
@@ -1453,7 +1438,6 @@ impl App {
         p.rect_filled(Rect::from_min_size(pos2(sr.left(), top), vec2(sr.width(), 1.)), 0., c.gb);
         p.rect_filled(Rect::from_center_size(pos2(sr.center().x, top + 12.), vec2(46., 4.5)), 2.25, fade(c.mu, 0.7));
 
-        // close
         let xb = Rect::from_center_size(pos2(sr.right() - 32., top + 36.), vec2(40., 40.));
         let rx = ui.allocate_rect(xb, sense(on));
         icon(&p, "x", xb.center(), 17., c.tx);
@@ -1462,7 +1446,6 @@ impl App {
             info!("player: closed");
         }
 
-        // cover
         let cs = (sr.width() - 96.).min(sr.height() * 0.34).min(260.).max(120.);
         let cc = pos2(sr.center().x, top + 66. + cs / 2.);
         let breathe = if self.playing { ((self.now * 2.2).sin() as f32) * 0.006 } else { 0. };
@@ -1484,7 +1467,6 @@ impl App {
             None => disc(&p, cc, cs, self.rot, c),
         }
 
-        // titles
         let d = self.dur().max(0.001);
         let pos = self.pos().clamp(0., d);
         let (title, artist) = self.now_meta();
@@ -1494,7 +1476,6 @@ impl App {
         txt(&p, pos2(sr.center().x, ty + 25.), Align2::CENTER_CENTER,
             ellip(&p, &artist, f4(13.5), sr.width() - 64.), f4(13.5), c.mu);
 
-        // progress
         let srect = Rect::from_min_max(pos2(sr.left() + 30., ty + 48.), pos2(sr.right() - 30., ty + 76.));
         let (nv, dragging, done) = slider(ui, srect, pos / d, c, on);
         if on {
@@ -1508,7 +1489,6 @@ impl App {
             fmt(if dragging { nv * d } else { pos }), f4(11.), c.mu);
         txt(&p, pos2(srect.right(), srect.bottom() + 13.), Align2::RIGHT_CENTER, fmt(d), f4(11.), c.mu);
 
-        // transport controls
         let cy = srect.bottom() + 48.;
         let fr = |f: f32| sr.left() + sr.width() * f;
         let sb = Rect::from_center_size(pos2(fr(0.13), cy), vec2(34., 34.));
@@ -1543,7 +1523,6 @@ impl App {
             info!("repeat mode {}", self.rep);
         }
 
-        // volume
         let vy = cy + 64.;
         icon(&p, "vol", pos2(sr.left() + 40., vy), 20., c.mu);
         let vrect = Rect::from_min_max(pos2(sr.left() + 62., vy - 14.), pos2(sr.right() - 34., vy + 14.));
@@ -1615,18 +1594,16 @@ impl eframe::App for App {
         self.dt = ctx.input(|i| i.stable_dt).max(1. / 120.);
         self.player_t = ctx.animate_value_with_time(Id::new("sheet"), if self.player { 1. } else { 0. }, 0.28);
 
-        // library arrival
         if !self.got_lib {
             if let Ok(v) = self.rx.try_recv() {
                 self.got_lib = true;
                 info!("library: ready — {} songs", v.len());
                 self.songs = v;
-                self.covers.clear(); // stale indices from a previous scan would be wrong
+                self.covers.clear();
                 self.rebuild_groups();
                 self.spawn_covers();
             }
         }
-        // progressive cover upload (max 8/frame)
         let mut up = 0;
         while up < 8 {
             match self.cover_rx.try_recv() {
@@ -1644,7 +1621,6 @@ impl eframe::App for App {
             self.covers.clear();
         }
 
-        // safe-area insets (Android)
         #[cfg(target_os = "android")]
         {
             if self.now > self.inset_poll + 2. {
