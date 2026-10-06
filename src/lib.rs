@@ -781,7 +781,7 @@ fn request_audio_permission(app: &AndroidApp) {
             let s0 = env.new_string("android.permission.READ_MEDIA_AUDIO").ok()?;
             let s1 = env.new_string("android.permission.READ_EXTERNAL_STORAGE").ok()?;
             let arr = env.new_object_array(2, cls, s0).ok()?;
-            env.set_object_array_element(arr, 1, s1).ok()?;
+            env.set_object_array_element(&arr, 1, s1).ok()?;
             env.call_method(
                 &act,
                 "requestPermissions",
