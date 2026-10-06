@@ -1,67 +1,49 @@
-name: Build Velora APK
+name: Build Android APK (build2)
 
 on:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
+  apk:
+    name: Velora APK (aarch64)
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Setup Android SDK and NDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: "platforms;android-34 build-tools;34.0.0 ndk;26.3.11579264"
-
-      - name: Set NDK path
-        run: |
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
-
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (stable) + Android target
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK + platform
+        run: |
+          sdkmanager --install "ndk;27.0.12077973" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
 
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
 
-      - name: Create debug keystore
-        run: |
-          mkdir -p $HOME/.android
-          keytool -genkey -v -keystore $HOME/.android/debug.keystore \
-            -storepass android -keypass android -alias androiddebugkey \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-          # cargo-apk does not expand $HOME in Cargo.toml and reads the path
-          # relative to the project folder, so place a copy at that literal path.
-          mkdir -p '$HOME/.android'
-          cp $HOME/.android/debug.keystore '$HOME/.android/debug.keystore'
-
-      - name: Download Inter fonts
-        run: |
-          mkdir -p assets/fonts
-          curl -fL -o inter.zip https://github.com/rsms/inter/releases/download/v4.0/Inter-4.0.zip
-          unzip -j -o inter.zip "extras/ttf/Inter-Regular.ttf" "extras/ttf/Inter-SemiBold.ttf" "extras/ttf/Inter-ExtraBold.ttf" -d assets/fonts
-          ls -l assets/fonts
-
       - name: Build release APK
-        env:
-          # Link the C++ ABI runtime statically so libvelora.so finds
-          # symbols like __cxa_pure_virtual at runtime on the phone.
-          RUSTFLAGS: "-C link-arg=-lc++abi"
         run: cargo apk build --release
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: Velora-apk
+          name: Velora-APK
           path: target/release/apk/*.apk
+          if-no-files-found: error
