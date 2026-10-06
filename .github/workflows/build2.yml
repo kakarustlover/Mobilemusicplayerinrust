@@ -47,6 +47,13 @@ jobs:
           mkdir -p '$HOME/.android'
           cp $HOME/.android/debug.keystore '$HOME/.android/debug.keystore'
 
+      - name: Download Inter fonts
+        run: |
+          mkdir -p assets/fonts
+          curl -fL -o inter.zip https://github.com/rsms/inter/releases/download/v4.0/Inter-4.0.zip
+          unzip -j -o inter.zip "extras/ttf/Inter-Regular.ttf" "extras/ttf/Inter-SemiBold.ttf" "extras/ttf/Inter-ExtraBold.ttf" -d assets/fonts
+          ls -l assets/fonts
+
       - name: Build release APK
         env:
           # Link the C++ ABI runtime statically so libvelora.so finds
