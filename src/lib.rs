@@ -190,7 +190,6 @@ fn fmt(s: f32) -> String {
     let s = s.max(0.).round() as u64;
     format!("{}:{:02}", s / 60, s % 60)
 }
-/// f32-typed stroke constructor (keeps the compiler from f64-literal fallback warnings).
 fn sk(w: f32, c: Color32) -> Stroke {
     Stroke::new(w, c)
 }
@@ -721,35 +720,86 @@ mod audio {
 }
 use audio::Audio;
 
-// ---------------------------------------------------------------- android insets (JNI via ndk-context)
+// ---------------------------------------------------------------- android: JNI helpers (crash-safe)
 
+/// Queries status-bar / gesture-bar insets by calling the *Activity* (not the Application!)
+/// via JNI. Every step is exception-guarded: any pending Java exception is cleared so the
+/// JVM can never abort the process (that was the startup crash).
 #[cfg(target_os = "android")]
-fn query_insets(ppp: f32) -> (f32, f32) {
+fn query_insets(app: &AndroidApp, ppp: f32) -> (f32, f32) {
     use jni::objects::JObject;
 
     let read = || -> Option<(i32, i32)> {
+        let raw = app.activity_as_ptr();
+        if raw.is_null() {
+            return None;
+        }
         let cctx = ndk_context::android_context();
         let vm = unsafe { jni::JavaVM::from_raw(cctx.vm().cast()) }.ok()?;
         let mut env = vm.attach_current_thread().ok()?;
-        let act = unsafe { JObject::from_raw(cctx.context().cast()) };
+        let act = unsafe { JObject::from_raw(raw.cast()) };
         env.push_local_frame(16).ok()?;
-        let mut res: Option<(i32, i32)> = None;
-        let ok = (|| -> Option<()> {
+        let res = (|| -> Option<(i32, i32)> {
             let win = env.call_method(&act, "getWindow", "()Landroid/view/Window;", &[]).ok()?.l().ok()?;
             let dv = env.call_method(&win, "getDecorView", "()Landroid/view/View;", &[]).ok()?.l().ok()?;
             let ins = env.call_method(&dv, "getRootWindowInsets", "()Landroid/view/WindowInsets;", &[]).ok()?.l().ok()?;
             let top = env.call_method(&ins, "getSystemWindowInsetTop", "()I", &[]).ok()?.i().ok()?;
             let bot = env.call_method(&ins, "getSystemWindowInsetBottom", "()I", &[]).ok()?.i().ok()?;
-            res = Some((top, bot));
-            Some(())
+            Some((top, bot))
         })();
         let _ = unsafe { env.pop_local_frame(&JObject::null()) };
-        ok?;
+        if env.exception_check().unwrap_or(true) {
+            let _ = env.exception_clear();
+            return None;
+        }
         res
     };
     match read() {
         Some((top, bot)) => (((top as f32) / ppp).max(0.), ((bot as f32) / ppp).max(0.)),
-        None => (0., 0.),
+        // Sensible fallback so the UI never sits under the camera / gesture bar.
+        None => (28., 16.),
+    }
+}
+
+/// Opens the system permission dialog for music/media access (called once, ~1s after launch).
+#[cfg(target_os = "android")]
+fn request_audio_permission(app: &AndroidApp) {
+    use jni::objects::{JObject, JValue};
+
+    let run = || -> Option<()> {
+        let raw = app.activity_as_ptr();
+        if raw.is_null() {
+            return None;
+        }
+        let cctx = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(cctx.vm().cast()) }.ok()?;
+        let mut env = vm.attach_current_thread().ok()?;
+        let act = unsafe { JObject::from_raw(raw.cast()) };
+        env.push_local_frame(16).ok()?;
+        let r = (|| -> Option<()> {
+            let cls = env.find_class("java/lang/String").ok()?;
+            let s0 = env.new_string("android.permission.READ_MEDIA_AUDIO").ok()?;
+            let s1 = env.new_string("android.permission.READ_EXTERNAL_STORAGE").ok()?;
+            let arr = env.new_object_array(2, cls, s0).ok()?;
+            env.set_object_array_element(arr, 1, s1).ok()?;
+            env.call_method(
+                &act,
+                "requestPermissions",
+                "([Ljava/lang/String;I)V",
+                &[JValue::Object(&arr), JValue::Int(4711)],
+            )
+            .ok()?;
+            info!("perm: requestPermissions sent");
+            Some(())
+        })();
+        let _ = unsafe { env.pop_local_frame(&JObject::null()) };
+        if env.exception_check().unwrap_or(true) {
+            let _ = env.exception_clear();
+        }
+        r
+    };
+    if run().is_none() {
+        warn!("perm: JNI request failed — grant access manually in Settings → Apps → Velora");
     }
 }
 
@@ -856,6 +906,17 @@ impl App {
         let cfg_path = settings_path(&host);
         let (dark, pal, vol) = load_settings(&cfg_path);
         info!("boot: dark={dark} pal={pal:?} vol={vol:.2}");
+
+        // Ask for music access once, shortly after launch (system dialog pops over the app).
+        #[cfg(target_os = "android")]
+        {
+            let h = host.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(900));
+                request_audio_permission(&h);
+            });
+        }
+
         let audio = Audio::new();
         if audio.is_none() {
             warn!("audio backend unavailable — playback will be simulated");
@@ -1659,7 +1720,7 @@ impl eframe::App for App {
         {
             if self.now > self.inset_poll + 2. {
                 self.inset_poll = self.now;
-                let ni = query_insets(ctx.pixels_per_point());
+                let ni = query_insets(&self.host, ctx.pixels_per_point());
                 if (ni.0 - self.insets.0).abs() > 0.5 || (ni.1 - self.insets.1).abs() > 0.5 {
                     info!("insets: top={:.0} bottom={:.0}", ni.0, ni.1);
                     self.insets = ni;
