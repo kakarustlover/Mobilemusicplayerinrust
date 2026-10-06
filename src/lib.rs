@@ -33,6 +33,7 @@ struct Song {
     album: String,
     dur: f32,
     rot: f32,
+    cover: Option<std::sync::Arc<ColorImage>>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -45,9 +46,10 @@ enum Tab {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Pal {
+    Pearl,
     Sky,
     Amber,
-    Pearl,
+    Green,
 }
 
 enum Act {
@@ -107,10 +109,12 @@ struct C {
     gb: Color32,
     card: Color32,
     sheet: Color32,
+    track: Color32,
+    bl: [Color32; 3],
+    blo: [f32; 3],
     g1: f32,
     g2: f32,
     gl: f32,
-    bo: f32,
 }
 
 fn hx(h: u32) -> Color32 {
@@ -136,29 +140,51 @@ fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgba_premultiplied(f(a.r(), b.r()), f(a.g(), b.g()), f(a.b(), b.b()), f(a.a(), b.a()))
 }
 
+fn sstep(x: f32) -> f32 {
+    let x = x.clamp(0., 1.);
+    x * x * (3. - 2. * x)
+}
+
+/// Colour set for one palette, in light or dark mode.
 fn theme(dark: bool, pal: Pal) -> C {
-    // (a1, a2, b1, b2, b3, k1, k2, ac, acon, glow rgb, glow alpha)
-    let (a1, a2, b1, b2, b3, k1, k2, ac, acon, glow, ga) = match pal {
-        Pal::Sky => (0x7dd3fc, 0x2563eb, 0x7dd3fc, 0xbfdbfe, 0xe0f2fe, 0x2d70f0, 0x1e40af, 0x2563eb, 0xffffff, 0x2563eb, 0.42),
-        Pal::Amber => (0xfdba74, 0xea580c, 0xfdba74, 0xfed7aa, 0xfff1e6, 0xffb066, 0xf97316, 0xc2410c, 0x2b1204, 0xea580c, 0.42),
-        Pal::Pearl => (0xeceff3, 0x94a3b8, 0xd9d3c4, 0xe9e4d8, 0xf7f3ea, 0xf6f8fb, 0xa9b4c4, 0x475569, 0x1e293b, 0x64748b, 0.40),
+    // (a1, a2, b1, b2, b3, k1, k2, ac, acon, glow, glow alpha, light bg1, light bg2, dark bg1, dark bg2)
+    let (a1, a2, b1, b2, b3, k1, k2, ac, acon, glow, ga, l1, l2, d1, d2): (u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, f32, u32, u32, u32, u32) = match pal {
+        Pal::Pearl => (0xeceff3, 0x94a3b8, 0xd9d3c4, 0xe9e4d8, 0xf7f3ea, 0xf4f6fa, 0x98a5b8, 0x475569, 0x1e293b, 0x64748b, 0.36, 0xf1ebdf, 0xfbfaf6, 0x141416, 0x1e1e22),
+        Pal::Sky => (0xbcd7fa, 0x5f8be0, 0xcfe2fb, 0xe0ecfc, 0xf2f7fe, 0x78a4f2, 0x4a73d6, 0x3f68d4, 0xffffff, 0x4a73d6, 0.32, 0xe8f0fa, 0xfbfdff, 0x0b1322, 0x14213a),
+        Pal::Amber => (0xf8d3a6, 0xe58f45, 0xf7d9b4, 0xfae6cd, 0xfdf4e8, 0xf5b06a, 0xe0802f, 0xb4601c, 0x3b1d07, 0xe0802f, 0.32, 0xfbefe0, 0xfffaf3, 0x1a110a, 0x2a1b10),
+        Pal::Green => (0xbfe3cd, 0x56a67c, 0xcdebd8, 0xe1f3e8, 0xf3fbf6, 0x6cc096, 0x3a8c63, 0x2f7d57, 0xffffff, 0x3a8c63, 0.32, 0xe7f3ea, 0xfafdfb, 0x0a1510, 0x12231b),
     };
-    let (bg1, bg2, sheet) = match (dark, pal) {
-        (false, Pal::Sky) => (0xe4f3ff, 0xffffff, rgba(0xffffff, 0.88)),
-        (false, Pal::Amber) => (0xfff1e3, 0xffffff, rgba(0xffffff, 0.88)),
-        (false, Pal::Pearl) => (0xf1ebdf, 0xfbfaf6, rgba(0xffffff, 0.88)),
-        (true, Pal::Sky) => (0x0a1322, 0x0e1b33, rgba(0x0e1b33, 0.9)),
-        (true, Pal::Amber) => (0x1c1009, 0x27170b, rgba(0x27170b, 0.92)),
-        (true, Pal::Pearl) => (0x141416, 0x1e1e22, rgba(0x1e1e22, 0.92)),
+    let (bg1, bg2) = if dark { (hx(d1), hx(d2)) } else { (hx(l1), hx(l2)) };
+    let (a1c, a2c) = (hx(a1), hx(a2));
+    let warm = pal == Pal::Pearl;
+    let tx = match (dark, warm) {
+        (false, false) => 0x0f172a,
+        (false, true) => 0x1d1c1a,
+        (true, false) => 0xf1f5f9,
+        (true, true) => 0xf2f0ec,
     };
+    let mu = match (dark, warm) {
+        (false, false) => 0x475569,
+        (false, true) => 0x625e56,
+        (true, false) => 0xa3b3c8,
+        (true, true) => 0xaaa69d,
+    };
+    let sheet = if dark {
+        let m = mix(bg2, Color32::WHITE, 0.05);
+        Color32::from_rgba_unmultiplied(m.r(), m.g(), m.b(), 244)
+    } else {
+        Color32::from_rgba_unmultiplied(bg2.r(), bg2.g(), bg2.b(), 242)
+    };
+    let bl = if dark { [mix(bg2, a2c, 0.5), mix(bg2, a2c, 0.38), mix(bg2, a1c, 0.28)] } else { [hx(b1), a2c, hx(b2)] };
+    let blo = if dark { [0.7, 0.55, 0.45] } else { [0.6, 0.33, 0.6] };
     C {
         dark,
-        bg1: hx(bg1),
-        bg2: hx(bg2),
-        tx: hx(if dark { 0xf1f5f9 } else { 0x0f172a }),
-        mu: hx(if dark { 0xa3b3c8 } else { 0x475569 }),
-        a1: hx(a1),
-        a2: hx(a2),
+        bg1,
+        bg2,
+        tx: hx(tx),
+        mu: hx(mu),
+        a1: a1c,
+        a2: a2c,
         b1: hx(b1),
         b2: hx(b2),
         b3: hx(b3),
@@ -167,14 +193,16 @@ fn theme(dark: bool, pal: Pal) -> C {
         ac: hx(ac),
         acon: hx(acon),
         glow: rgba(glow, ga),
-        sh: if dark { rgba(0x000000, 0.5) } else { rgba(0x0f172a, 0.14) },
-        gb: wa(if dark { 0.3 } else { 0.9 }),
-        card: wa(if dark { 0.09 } else { 0.6 }),
+        sh: if dark { rgba(0x000000, 0.5) } else { rgba(0x0f172a, 0.12) },
+        gb: wa(if dark { 0.22 } else { 0.9 }),
+        card: wa(if dark { 0.08 } else { 0.62 }),
         sheet,
-        g1: if dark { 0.17 } else { 0.74 },
-        g2: if dark { 0.05 } else { 0.26 },
-        gl: if dark { 0.16 } else { 0.5 },
-        bo: if dark { 0.4 } else { 0.6 },
+        track: if dark { wa(0.16) } else { rgba(0x0f172a, 0.12) },
+        bl,
+        blo,
+        g1: if dark { 0.12 } else { 0.74 },
+        g2: if dark { 0.035 } else { 0.26 },
+        gl: if dark { 0.10 } else { 0.5 },
     }
 }
 
@@ -584,8 +612,34 @@ fn tex_quad(p: &Painter, id: TextureId, rect: Rect, tint: Color32) {
     p.add(Shape::mesh(m));
 }
 
+/// Textured rounded rect (cover art). `rot` rotates the picture around the centre.
+fn tex_round(p: &Painter, id: TextureId, rect: Rect, r: f32, rot: f32, tint: Color32) {
+    let pts = outline(rect, r);
+    let c = rect.center();
+    let (sn, cs) = rot.sin_cos();
+    let uv = |q: Pos2| {
+        let d = q - c;
+        pos2(0.5 + (d.x * cs + d.y * sn) / rect.width(), 0.5 + (-d.x * sn + d.y * cs) / rect.height())
+    };
+    let mut m = Mesh::with_texture(id);
+    m.vertices.push(egui::epaint::Vertex { pos: c, uv: uv(c), color: tint });
+    for (q, _) in &pts {
+        m.vertices.push(egui::epaint::Vertex { pos: *q, uv: uv(*q), color: tint });
+    }
+    let n = pts.len() as u32;
+    for i in 0..n {
+        m.add_triangle(0, 1 + i, 1 + (i + 1) % n);
+    }
+    p.add(Shape::mesh(m));
+}
+
 /// Rounded-rect with a per-vertex colour function. `kinks` are y fractions where the function is only piecewise-linear.
 fn fill(p: &Painter, rect: Rect, r: f32, kinks: &[f32], f: &dyn Fn(Pos2) -> Color32) {
+    fill_band(p, rect, r, 0., rect.height(), kinks, f);
+}
+
+/// Like `fill`, but only paints the horizontal band `y0..y1` (pixels from the top) of the rounded shape.
+fn fill_band(p: &Painter, rect: Rect, r: f32, y0: f32, y1: f32, kinks: &[f32], f: &dyn Fn(Pos2) -> Color32) {
     let (w, h) = (rect.width(), rect.height());
     let r = r.min(w / 2.).min(h / 2.).max(0.);
     let mut ys = vec![0., h];
@@ -602,6 +656,9 @@ fn fill(p: &Painter, rect: Rect, r: f32, kinks: &[f32], f: &dyn Fn(Pos2) -> Colo
     for k in kinks {
         ys.push(k * h);
     }
+    ys.push(y0);
+    ys.push(y1);
+    ys.retain(|v| *v >= y0 - 0.001 && *v <= y1 + 0.001);
     ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
     ys.dedup_by(|a, b| (*a - *b).abs() < 0.01);
     let inset = |dy: f32| -> f32 {
@@ -755,17 +812,28 @@ impl Gfx {
         self.p.rect_stroke(rect.shrink(0.5), (r - 0.5).max(0.), Stroke::new(1., col));
     }
 
-    /// The `::after` gloss lens of `.glass` (top 48% of the padding box, radius scaled like CSS does).
-    /// `ext_top` extends the shape upward (used by the top sheet whose top edge is off-screen).
+    /// The `::after` gloss lens of `.glass`: the top 48% of the padding box, clipped to the button's own
+    /// rounded shape so it can never poke out at the corners. `ext_top` extends the shape upward (top sheet).
     fn lens(&self, rect: Rect, r: f32, strength: f32, a: f32, ext_top: f32) {
         let inner = rect.shrink(1.);
         let ri = (r - 1.).max(0.);
         let hh = inner.height() * 0.48;
-        let f = if ri > 0. { (hh / (2. * ri)).min(inner.width() / (2. * ri)).min(1.) } else { 1. };
-        let draw = Rect::from_min_max(pos2(inner.left(), inner.top() - ext_top), pos2(inner.right(), inner.top() + hh));
+        let full = Rect::from_min_max(pos2(inner.left(), inner.top() - ext_top), inner.right_bottom());
         let top = inner.top();
-        let kink = ext_top / draw.height();
-        fill(&self.p, draw, ri * f, &[kink], &|q| wa(0.7 * (1. - (q.y - top) / hh).clamp(0., 1.) * strength * a));
+        fill_band(&self.p, full, ri, ext_top, ext_top + hh, &[], &|q| wa(0.7 * (1. - (q.y - top) / hh).clamp(0., 1.) * strength * a));
+    }
+
+    /// Dark veil while a button is pressed (no new textures, so it is free).
+    fn pressfx(&self, rect: Rect, r: f32, s: f32) {
+        if s < 0.999 {
+            self.p.rect_filled(rect, r, rgba(0x000000, (1. - s) * 1.4));
+        }
+    }
+
+    /// Press feedback: 1.0 normally, eases to 0.92 while the pointer holds the button down.
+    fn press(&self, key: &str, rect: Rect, on: bool) -> f32 {
+        let down = on && self.ctx.input(|i| i.pointer.primary_down() && i.pointer.interact_pos().map_or(false, |p| rect.contains(p)));
+        self.ctx.animate_value_with_time(Id::new(("press", key)), if down { 0.92 } else { 1.0 }, 0.12)
     }
 
     /// `.glass`: translucent gradient, hairline border, inner highlight, soft shadow.
@@ -865,9 +933,9 @@ impl Gfx {
         let c = self.c;
         let (w, h) = (sr.width(), sr.height());
         let defs = [
-            (300., pos2(sr.left() + w - 60., sr.top() + 80.), c.b1, c.bo, 0.),
-            (260., pos2(sr.left() + 30., sr.top() + h - 220.), c.a2, c.bo * 0.55, 5.),
-            (220., pos2(sr.left() + w - 40., sr.top() + 0.42 * h + 110.), c.b2, c.bo, 9.),
+            (300., pos2(sr.left() + w - 60., sr.top() + 80.), c.bl[0], c.blo[0], 0.),
+            (260., pos2(sr.left() + 30., sr.top() + h - 220.), c.bl[1], c.blo[1], 5.),
+            (220., pos2(sr.left() + w - 40., sr.top() + 0.42 * h + 110.), c.bl[2], c.blo[2], 9.),
         ];
         for (d, ce, col, op, delay) in defs {
             let t = (now + delay) / 14.;
@@ -917,7 +985,7 @@ impl Gfx {
         let c = self.c;
         let cy = area.center().y;
         let track = Rect::from_min_max(pos2(area.left(), cy - 3.), pos2(area.right(), cy + 3.));
-        self.p.rect_filled(track, 3., rgba(0x808080, 0.28));
+        self.p.rect_filled(track, 3., c.track);
         let fw = f.clamp(0., 1.) * track.width();
         if fw > 0.5 {
             let clip = Rect::from_min_max(track.min, pos2(track.left() + fw, track.bottom()));
@@ -939,9 +1007,18 @@ fn txt(p: &Painter, pos: Pos2, al: Align2, s: impl ToString, font: FontId, col: 
 
 // ---------------------------------------------------------------- library scan (tags via lofty)
 
+/// Decodes an embedded cover picture into a small square image.
+fn decode_cover(bytes: &[u8]) -> Option<std::sync::Arc<ColorImage>> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let img = img.resize_to_fill(160, 160, image::imageops::FilterType::Triangle).to_rgba8();
+    let (w, h) = img.dimensions();
+    Some(std::sync::Arc::new(ColorImage::from_rgba_unmultiplied([w as usize, h as usize], img.as_raw())))
+}
+
 fn read_meta(p: &Path) -> Song {
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string();
     let (mut t, mut a, mut al, mut d) = (stem, "Unknown".to_string(), "Unknown".to_string(), 0.0f32);
+    let mut cover = None;
     if let Ok(tf) = lofty::read_from_path(p) {
         d = tf.properties().duration().as_secs_f32();
         if let Some(tag) = tf.primary_tag().or_else(|| tf.first_tag()) {
@@ -954,10 +1031,13 @@ fn read_meta(p: &Path) -> Song {
             if let Some(x) = tag.album() {
                 al = x.to_string();
             }
+            if let Some(pic) = tag.pictures().first() {
+                cover = decode_cover(pic.data());
+            }
         }
     }
     let rot = (t.bytes().map(|b| b as u32).sum::<u32>() % 360) as f32;
-    Song { path: p.to_path_buf(), title: t, artist: a, album: al, dur: d, rot }
+    Song { path: p.to_path_buf(), title: t, artist: a, album: al, dur: d, rot, cover }
 }
 
 fn walk(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
@@ -1023,7 +1103,7 @@ fn spawn_scan() -> Receiver<Vec<Song>> {
     let v = demo
         .iter()
         .enumerate()
-        .map(|(k, (t, a, al, d))| Song { path: PathBuf::from("/demo"), title: t.to_string(), artist: a.to_string(), album: al.to_string(), dur: *d, rot: k as f32 * 72. })
+        .map(|(k, (t, a, al, d))| Song { path: PathBuf::from("/demo"), title: t.to_string(), artist: a.to_string(), album: al.to_string(), dur: *d, rot: k as f32 * 72., cover: None })
         .collect();
     let _ = tx.send(v);
     rx
@@ -1033,7 +1113,7 @@ fn spawn_scan() -> Receiver<Vec<Song>> {
 
 #[cfg(target_os = "android")]
 mod audio {
-    use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+    use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
     use std::fs::File;
     use std::io::BufReader;
     use std::path::Path;
@@ -1050,15 +1130,17 @@ mod audio {
             let (s, h) = OutputStream::try_default().ok()?;
             Some(Self { _stream: s, handle: h, sink: None })
         }
-        pub fn load(&mut self, p: &Path, vol: f32) -> bool {
+        /// Starts the file; returns its length in seconds (0 when unknown) or None when it cannot be played.
+        pub fn load(&mut self, p: &Path, vol: f32) -> Option<f32> {
             self.stop();
-            let Ok(f) = File::open(p) else { return false };
-            let Ok(src) = Decoder::new(BufReader::new(f)) else { return false };
-            let Ok(sink) = Sink::try_new(&self.handle) else { return false };
+            let f = File::open(p).ok()?;
+            let src = Decoder::new(BufReader::new(f)).ok()?;
+            let sink = Sink::try_new(&self.handle).ok()?;
+            let dur = src.total_duration().map_or(0., |d| d.as_secs_f32());
             sink.set_volume(vol);
             sink.append(src);
             self.sink = Some(sink);
-            true
+            Some(dur)
         }
         pub fn pos(&self) -> f32 {
             self.sink.as_ref().map_or(0., |s| s.get_pos().as_secs_f32())
@@ -1104,9 +1186,9 @@ mod audio {
         pub fn new() -> Option<Self> {
             Some(Self { pos: 32. })
         }
-        pub fn load(&mut self, _p: &Path, _vol: f32) -> bool {
+        pub fn load(&mut self, _p: &Path, _vol: f32) -> Option<f32> {
             self.pos = 32.;
-            true
+            Some(0.)
         }
         pub fn pos(&self) -> f32 {
             self.pos
@@ -1152,13 +1234,86 @@ struct App {
     insets: (f32, f32),
     inset_poll: f64,
     last_theme: Option<(bool, Pal)>,
+    cfg_path: Option<PathBuf>,
+    cov: HashMap<usize, TextureHandle>,
+    list_t: f64,
+    sv: f32,
+    last_off: f32,
+    dt: f32,
     #[cfg(not(target_os = "android"))]
     dbg: Dbg,
+}
+
+/// Where the saved settings live (the app's private folder on the phone).
+fn settings_path(host: &Host) -> Option<PathBuf> {
+    #[cfg(target_os = "android")]
+    {
+        host.internal_data_path().map(|p| p.join("velora.cfg"))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = host;
+        Some(std::env::temp_dir().join("velora.cfg"))
+    }
+}
+
+fn pal_key(p: Pal) -> &'static str {
+    match p {
+        Pal::Pearl => "bone",
+        Pal::Sky => "blue",
+        Pal::Amber => "amber",
+        Pal::Green => "green",
+    }
+}
+
+fn load_settings(path: &Option<PathBuf>) -> (bool, Pal) {
+    let (mut dark, mut pal) = (false, Pal::Pearl);
+    if let Some(p) = path {
+        if let Ok(text) = std::fs::read_to_string(p) {
+            for line in text.lines() {
+                if let Some((k, v)) = line.split_once('=') {
+                    match k.trim() {
+                        "dark" => dark = v.trim() == "1",
+                        "pal" => {
+                            pal = match v.trim() {
+                                "blue" => Pal::Sky,
+                                "amber" => Pal::Amber,
+                                "green" => Pal::Green,
+                                _ => Pal::Pearl,
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    (dark, pal)
+}
+
+fn save_settings(path: &Option<PathBuf>, dark: bool, pal: Pal) {
+    if let Some(p) = path {
+        let _ = std::fs::write(p, format!("dark={}\npal={}\n", if dark { 1 } else { 0 }, pal_key(pal)));
+    }
+}
+
+/// Texture for a song's embedded cover (created on first use).
+fn cover_tex(cov: &mut HashMap<usize, TextureHandle>, ctx: &Context, songs: &[Song], i: usize) -> Option<TextureId> {
+    if let Some(t) = cov.get(&i) {
+        return Some(t.id());
+    }
+    let img = songs.get(i)?.cover.as_ref()?;
+    let th = ctx.load_texture(format!("cover{}", i), (**img).clone(), TextureOptions::LINEAR);
+    let id = th.id();
+    cov.insert(i, th);
+    Some(id)
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, host: Host) -> Self {
         install_fonts(&cc.egui_ctx);
+        let cfg_path = settings_path(&host);
+        let (dark0, pal0) = load_settings(&cfg_path);
         let mut app = Self {
             host,
             songs: Vec::new(),
@@ -1171,8 +1326,8 @@ impl App {
             rep: 0,
             tab: Tab::Songs,
             query: String::new(),
-            dark: cc.egui_ctx.style().visuals.dark_mode,
-            pal: Pal::Sky,
+            dark: dark0,
+            pal: pal0,
             panel: false,
             player: false,
             vol: 0.8,
@@ -1186,6 +1341,12 @@ impl App {
             insets: (0., 0.),
             inset_poll: -10.,
             last_theme: None,
+            cfg_path,
+            cov: HashMap::new(),
+            list_t: 1.7,
+            sv: 0.,
+            last_off: 0.,
+            dt: 0.033,
             #[cfg(not(target_os = "android"))]
             dbg: Dbg::from_env(),
         };
@@ -1195,13 +1356,16 @@ impl App {
     }
 
     fn play_index(&mut self, i: usize) {
-        let Some(s) = self.songs.get(i) else { return };
+        let Some(path) = self.songs.get(i).map(|s| s.path.clone()) else { return };
         self.cur = i;
         self.seeking = None;
-        let ok = match self.audio.as_mut() {
-            Some(a) => a.load(&s.path, self.vol),
-            None => false,
-        };
+        let res = self.audio.as_mut().and_then(|a| a.load(&path, self.vol));
+        let ok = res.is_some();
+        if let Some(d) = res {
+            if d > 0. && self.songs[i].dur <= 0. {
+                self.songs[i].dur = d;
+            }
+        }
         self.loaded = if ok { Some(i) } else { None };
         self.playing = ok;
         if ok {
@@ -1347,6 +1511,12 @@ impl App {
         let mut act: Option<Act> = None;
         let mut open_panel = false;
         let mut new_tab: Option<Tab> = None;
+        let now = self.now;
+        let list_t = self.list_t;
+        let dtv = self.dt.max(0.005);
+        let bar_top = sr.bottom() - ib - 14. - 78.;
+        let mut sv = self.sv;
+        let mut last_off = self.last_off;
 
         ui.allocate_ui_at_rect(sr, |ui| {
             ScrollArea::vertical().id_source("home").enable_scrolling(on).auto_shrink([false, false]).scroll_bar_visibility(scroll_area::ScrollBarVisibility::AlwaysHidden).show_viewport(ui, |ui, vp| {
@@ -1354,6 +1524,13 @@ impl App {
                 let o = full.min;
                 let saved = std::mem::replace(&mut g.p, ui.painter().clone());
                 let at = |x: f32, y: f32| pos2(o.x + x, o.y + y);
+
+                // scrolling speed -> rows get a soft, slightly faded look while the list is flying
+                let off = vp.min.y;
+                let v = ((off - last_off).abs() / dtv).min(9000.);
+                sv += (v - sv) * 0.25;
+                last_off = off;
+                let calm = 1. - 0.3 * sstep(sv / 3500.);
 
                 // search bar + appearance button
                 let sb = Rect::from_min_size(at(x0 + 16., it + 12.), vec2(hw - 32. - 52., 48.));
@@ -1385,22 +1562,35 @@ impl App {
                     let _ = r;
                 });
                 let tb = Rect::from_min_size(at(x0 + hw - 16. - 42., it + 15.), vec2(42., 42.));
+                let sp = g.press("theme", tb, on);
                 g.glass(tb, 21., 1.);
-                icon(&g.p, "pal", tb.center(), 22., c.tx);
+                g.pressfx(tb, 21., sp);
+                icon(&g.p, "pal", tb.center(), 22. * sp, c.tx);
                 if on && ui.interact(tb, Id::new("theme"), Sense::click()).clicked() {
                     open_panel = true;
                 }
 
-                // tabs
+                // tabs with a sliding pill
+                let labels = [("Songs", Tab::Songs), ("Albums", Tab::Albums), ("Singers", Tab::Singers), ("Playlist", Tab::Playlist)];
+                let mut trs: Vec<Rect> = Vec::new();
                 let mut x = x0 + 16. + 2.;
-                for (i, (label, tab)) in [("Songs", Tab::Songs), ("Albums", Tab::Albums), ("Singers", Tab::Singers), ("Playlist", Tab::Playlist)].iter().enumerate() {
+                for (label, _) in labels.iter() {
                     let wt = g.p.layout_no_wrap(label.to_string(), f6(14.), c.mu).size().x + 30.;
-                    let r = Rect::from_min_size(at(x, it + 74.), vec2(wt, 38.));
+                    trs.push(Rect::from_min_size(at(x, it + 74.), vec2(wt, 38.)));
+                    x += wt + 8.;
+                }
+                let si = labels.iter().position(|(_, t)| *t == self.tab).unwrap_or(0);
+                let px = g.ctx.animate_value_with_time(Id::new("tab_x"), trs[si].left() - o.x, 0.28) + o.x;
+                let pw = g.ctx.animate_value_with_time(Id::new("tab_w"), trs[si].width(), 0.28);
+                let pill = Rect::from_min_size(pos2(px, trs[si].top()), vec2(pw, 38.));
+                g.p.rect_filled(pill, 19., c.card);
+                g.p.rect_stroke(pill.shrink(0.5), 18.5, Stroke::new(1., wa(if c.dark { 0.12 } else { 0.7 })));
+                for (i, (label, tab)) in labels.iter().enumerate() {
+                    let r = trs[i];
                     txt(&g.p, r.center(), Align2::CENTER_CENTER, label, f6(14.), if self.tab == *tab { c.tx } else { c.mu });
                     if on && ui.interact(r, Id::new(("tab", i)), Sense::click()).clicked() {
                         new_tab = Some(*tab);
                     }
-                    x += wt + 8.;
                 }
 
                 if songs_tab {
@@ -1426,28 +1616,44 @@ impl App {
                     let last = ((((vp.max.y - list_top) / 56.).ceil()).max(0.) as usize).min(n_rows);
                     for k in first..last {
                         let r = Rect::from_min_size(at(row_x, list_top + k as f32 * 56.), vec2(row_w, 56.));
-                        let (title, sub, right, rot, cur) = if songs_tab {
+                        let cy = r.center().y;
+                        let f_top = sstep((cy - (sr.top() + it * 0.4)) / 90.);
+                        let f_bot = sstep((bar_top + 40. - cy) / 130.);
+                        let st_k = k.min(14) as f64;
+                        let stag = sstep(((now - list_t - st_k * 0.04) / 0.35) as f32);
+                        let a = (f_top * f_bot * stag * calm).clamp(0., 1.);
+                        let resp = ui.interact(r, Id::new(("row", k)), sense);
+                        if a < 0.01 {
+                            continue;
+                        }
+                        let (title, sub, right, rot, cur, song) = if songs_tab {
                             let s = &self.songs[idx[k]];
-                            (s.title.clone(), s.artist.clone(), fmt(s.dur), s.rot, idx[k] == self.cur)
+                            (s.title.clone(), s.artist.clone(), if s.dur > 0. { fmt(s.dur) } else { String::new() }, s.rot, idx[k] == self.cur, Some(idx[k]))
                         } else {
                             let (nm, n) = &groups[k];
-                            (nm.clone(), format!("{} {}", n, if *n == 1 { "song" } else { "songs" }), String::new(), k as f32 * 72. + 30., false)
+                            (nm.clone(), format!("{} {}", n, if *n == 1 { "song" } else { "songs" }), String::new(), k as f32 * 72. + 30., false, None)
                         };
-                        let resp = ui.interact(r, Id::new(("row", k)), sense);
+                        let dx = (1. - stag) * 14.;
                         if cur {
-                            g.p.rect_filled(r, 18., c.card);
+                            g.p.rect_filled(r.translate(vec2(dx, 0.)), 18., fade(c.card, a));
                         }
-                        let art = Rect::from_min_size(pos2(r.left() + 10., r.center().y - 20.), vec2(40., 40.));
-                        conic(&g.p, art, 13., rot, [c.a1, c.a2, c.b3, c.a1], 96);
-                        let tx = art.right() + 12.;
+                        let sc = 0.86 + 0.14 * a;
+                        let art = Rect::from_center_size(pos2(r.left() + 30. + dx, cy), vec2(40. * sc, 40. * sc));
+                        let cv = song.and_then(|i| cover_tex(&mut self.cov, &g.ctx, &self.songs, i));
+                        if let Some(id) = cv {
+                            tex_round(&g.p, id, art, 13. * sc, 0., fade(Color32::WHITE, a));
+                        } else {
+                            conic(&g.p, art, 13. * sc, rot, [fade(c.a1, a), fade(c.a2, a), fade(c.b3, a), fade(c.a1, a)], 96);
+                        }
+                        let tx = r.left() + 62. + dx;
                         let tw = if right.is_empty() { 0. } else { g.p.layout_no_wrap(right.clone(), f4(14.), c.mu).size().x + 12. };
                         let maxw = r.right() - 10. - tw - tx;
                         let t1 = ellipsize(&g.p, &title, f8(16.), maxw);
                         let t2 = ellipsize(&g.p, &sub, f4(13.333), maxw);
-                        txt(&g.p, pos2(tx, r.center().y - 8.), Align2::LEFT_CENTER, t1, f8(16.), c.tx);
-                        txt(&g.p, pos2(tx, r.center().y + 10.), Align2::LEFT_CENTER, t2, f4(13.333), c.mu);
+                        txt(&g.p, pos2(tx, cy - 8.), Align2::LEFT_CENTER, t1, f8(16.), fade(c.tx, a));
+                        txt(&g.p, pos2(tx, cy + 10.), Align2::LEFT_CENTER, t2, f4(13.333), fade(c.mu, a));
                         if !right.is_empty() {
-                            txt(&g.p, pos2(r.right() - 10., r.center().y), Align2::RIGHT_CENTER, right, f4(14.), c.mu);
+                            txt(&g.p, pos2(r.right() - 10. + dx, cy), Align2::RIGHT_CENTER, right, f4(14.), fade(c.mu, a));
                         }
                         if resp.clicked() {
                             act = Some(if songs_tab { Act::Play(idx[k]) } else { Act::Filter(groups[k].0.clone()) });
@@ -1457,17 +1663,21 @@ impl App {
                 g.p = saved;
             });
         });
+        self.sv = sv;
+        self.last_off = last_off;
         if open_panel {
             self.panel = true;
         }
         if let Some(t) = new_tab {
             self.tab = t;
+            self.list_t = now;
         }
         match act {
             Some(Act::Play(i)) => self.play_index(i),
             Some(Act::Filter(n)) => {
                 self.query = n;
                 self.tab = Tab::Songs;
+                self.list_t = now;
             }
             None => {}
         }
@@ -1481,7 +1691,11 @@ impl App {
         g.sheet(mb, 30., mb);
         let (title, artist, rot) = self.songs.get(self.cur).map_or(("No music yet".to_string(), String::new(), 0.), |s| (s.title.clone(), s.artist.clone(), s.rot));
         let art = Rect::from_min_size(pos2(mb.left() + 11., mb.center().y - 21.), vec2(42., 42.));
-        conic(&g.p, art, 21., rot + if self.playing { self.rot_mb.to_degrees() } else { 0. }, [c.a1, c.a2, c.b3, c.a1], 96);
+        let spin = if self.playing { self.rot_mb } else { 0. };
+        match cover_tex(&mut self.cov, &g.ctx, &self.songs, self.cur) {
+            Some(id) => tex_round(&g.p, id, art, 21., spin, Color32::WHITE),
+            None => conic(&g.p, art, 21., rot + spin.to_degrees(), [c.a1, c.a2, c.b3, c.a1], 96),
+        }
         let nx = Rect::from_center_size(pos2(mb.right() - 11. - 20., mb.center().y), vec2(40., 40.));
         let pl = Rect::from_center_size(pos2(nx.left() - 8. - 20., mb.center().y), vec2(40., 40.));
         let tx = art.right() + 12.;
@@ -1490,9 +1704,12 @@ impl App {
         let t2 = ellipsize(&g.p, &artist, f4(13.333), maxw);
         txt(&g.p, pos2(tx, mb.center().y - 8.), Align2::LEFT_CENTER, t1, f8(16.), c.tx);
         txt(&g.p, pos2(tx, mb.center().y + 10.), Align2::LEFT_CENTER, t2, f4(13.333), c.mu);
+        let (s1, s2) = (g.press("mb_play", pl, on), g.press("mb_next", nx, on));
         g.accent(pl, 20., false);
-        icon(&g.p, if self.playing { "pause" } else { "play" }, pl.center(), 22., c.acon);
-        icon(&g.p, "next", nx.center(), 22., c.tx);
+        g.pressfx(pl, 20., s1);
+        icon(&g.p, if self.playing { "pause" } else { "play" }, pl.center(), 22. * s1, c.acon);
+        g.pressfx(nx, 20., s2);
+        icon(&g.p, "next", nx.center(), 22. * s2, c.tx);
         if on {
             if ui.interact(Rect::from_min_max(mb.min, pos2(pl.left() - 4., mb.bottom())), Id::new("mb_open"), Sense::click()).clicked() {
                 self.player = true;
@@ -1522,34 +1739,38 @@ impl App {
         let y = |dy: f32| pr.top() + it + dy;
         txt(&g.p, pos2(ix, y(34.)), Align2::LEFT_CENTER, "Appearance", f8(19.), c.tx);
         let xr = Rect::from_min_size(pos2(pr.right() - 19. - 42., y(13.)), vec2(42., 42.));
-        icon(&g.p, "x", xr.center(), 22., c.tx);
+        let sx = g.press("pn_x", xr, true);
+        g.pressfx(xr, 21., sx);
+        icon(&g.p, "x", xr.center(), 22. * sx, c.tx);
         if ui.interact(xr, Id::new("pn_x"), Sense::click()).clicked() {
             self.panel = false;
         }
         txt(&g.p, pos2(ix, y(78.5)), Align2::LEFT_CENTER, "App color", f6(15.), c.mu);
-        let cw = (tw - 38. - 20.) / 3.;
-        for (i, (pl, name, l, d)) in [(Pal::Sky, "Blue & White", 0xbae6fd, 0x2563eb), (Pal::Amber, "Orange & White", 0xfed7aa, 0xea580c), (Pal::Pearl, "Bone & Silver", 0xf7f3ea, 0x94a3b8)].iter().enumerate() {
+        let cw = (tw - 38. - 30.) / 4.;
+        for (i, (pl, name)) in [(Pal::Pearl, "Bone"), (Pal::Sky, "Blue"), (Pal::Amber, "Amber"), (Pal::Green, "Green")].iter().enumerate() {
             let cell = Rect::from_min_size(pos2(ix + i as f32 * (cw + 10.), y(98.)), vec2(cw, 84.8));
             let sw = Rect::from_center_size(pos2(cell.center().x, cell.top() + 8. + 21.), vec2(42., 42.));
             g.shadow(sw, 21., vec2(0., 4.), 12., c.sh);
-            let (lc, dc) = (hx(*l), hx(*d));
+            let pc = theme(false, *pl);
+            let (lc, dc) = (pc.a1, pc.k2);
             fill(&g.p, sw, 21., &[], &|q| mix(lc, dc, lin_t(sw, 135., q)));
             g.p.circle_stroke(sw.center(), 20., Stroke::new(2., Color32::WHITE));
-            if self.pal == *pl {
+            let k = e_slide(g.ctx.animate_bool_with_time(Id::new(("chk", i)), self.pal == *pl, 0.28));
+            if k > 0.01 {
                 // the CSS check mark: an 8x14 box with a 3px right+bottom border, rotated 45deg
                 let ce = sw.center() + vec2(0., -1.52);
                 let (sn, cs) = (FRAC_PI_2 / 2.).sin_cos();
                 let bars = |off: Vec2| -> [Vec<Pos2>; 2] {
-                    let tr = |a: [(f32, f32); 4]| -> Vec<Pos2> { a.iter().map(|&(px, py)| ce + off + vec2(px * cs - py * sn, px * sn + py * cs)).collect() };
+                    let tr = |a: [(f32, f32); 4]| -> Vec<Pos2> { a.iter().map(|&(px, py)| ce + off + vec2((px * cs - py * sn) * k, (px * sn + py * cs) * k)).collect() };
                     [tr([(2.5, -8.5), (5.5, -8.5), (5.5, 8.5), (2.5, 5.5)]), tr([(-5.5, 5.5), (2.5, 5.5), (5.5, 8.5), (-5.5, 8.5)])]
                 };
-                for k in [0.6f32, 1.2, 1.8] {
-                    for poly in bars(vec2(0., k)) {
-                        g.p.add(Shape::convex_polygon(poly, rgba(0x000000, 0.2), Stroke::NONE));
+                for o in [0.6f32, 1.2, 1.8] {
+                    for poly in bars(vec2(0., o)) {
+                        g.p.add(Shape::convex_polygon(poly, rgba(0x000000, 0.2 * k), Stroke::NONE));
                     }
                 }
                 for poly in bars(vec2(0., 0.)) {
-                    g.p.add(Shape::convex_polygon(poly, Color32::WHITE, Stroke::NONE));
+                    g.p.add(Shape::convex_polygon(poly, fade(Color32::WHITE, k), Stroke::NONE));
                 }
             }
             txt(&g.p, pos2(cell.center().x, cell.top() + 8. + 42. + 6. + 10.4), Align2::CENTER_CENTER, *name, f6(13.), c.tx);
@@ -1587,48 +1808,60 @@ impl App {
         g.radial(pr, 0., 1., 0.9, 0.55, c.glow, 0.7, 1.);
         g.radial(pr, 0.9, 0., 0.9, 0.55, c.b1, 0.7, 1.);
         ui.interact(pr, Id::new("pl_bg"), Sense::click());
+        let fa = sstep((e - 0.45) / 0.55);
         let w = pr.width();
         let cw = (w - 44.).min(460.);
         let x0 = pr.center().x - cw / 2.;
         let x1 = x0 + cw;
         let vh = sr.height();
-        let sz = (0.66 * w).min(0.36 * vh).min(280.);
-        let hs = [42., sz + 2., 57., 51., 74., 36.];
+        let sz = (0.74 * w).min(0.40 * vh).min(320.);
+        let hs = [42., sz + 2., 57., 51., 80.];
         let avail = pr.height() - it - ib - 28.;
-        let gap = ((avail - hs.iter().sum::<f32>()) / 5.).max(10.);
+        let gap = ((avail - hs.iter().sum::<f32>()) / 4.).max(10.);
         let cx = pr.center().x;
         let mut y = pr.top() + it + 10.;
 
         // top bar
         let cl = Rect::from_min_size(pos2(x0, y), vec2(42., 42.));
+        let sc = g.press("pl_close", cl, true);
         g.glass(cl, 21., 1.);
-        icon(&g.p, "down", cl.center(), 22., c.tx);
+        g.pressfx(cl, 21., sc);
+        icon(&g.p, "down", cl.center(), 22. * sc, c.tx);
         txt(&g.p, pos2(cx, y + 21.), Align2::CENTER_CENTER, "Now playing", f6(14.), c.mu);
         if ui.interact(cl, Id::new("pl_close"), Sense::click()).clicked() {
             self.player = false;
         }
         y += 42. + gap;
 
-        // art
+        // art: the embedded cover when the file has one, otherwise the spinning record
         let art = Rect::from_min_size(pos2(cx - (sz + 2.) / 2., y), vec2(sz + 2., sz + 2.));
         g.glass(art, 40., 1.);
         let base = self.songs.get(self.cur).map_or(0., |s| s.rot);
-        g.disc(art.center(), sz * 0.82, base + self.rot.to_degrees(), 1.);
+        match cover_tex(&mut self.cov, &g.ctx, &self.songs, self.cur) {
+            Some(id) => {
+                let cr = art.shrink(art.width() * 0.07);
+                g.shadow(cr, 28., vec2(0., 12.), 26., fade(c.sh, fa));
+                tex_round(&g.p, id, cr, 28., 0., fade(Color32::WHITE, fa));
+                g.p.rect_stroke(cr.shrink(0.5), 27.5, Stroke::new(1., wa(0.5 * fa)));
+            }
+            None => g.disc(art.center(), sz * 0.82, base + self.rot.to_degrees(), fa),
+        }
         y += sz + 2. + gap;
 
         // title
         let (title, artist, dur) = self.songs.get(self.cur).map_or(("No music found".to_string(), "Allow audio access to scan your phone".to_string(), 0.), |s| (s.title.clone(), s.artist.clone(), s.dur));
-        let frac = |t: f32| if dur > 0. { (t / dur).clamp(0., 1.) } else { 0. };
         let t1 = ellipsize(&g.p, &title, f8(24.), cw);
         let t2 = ellipsize(&g.p, &artist, f4(15.), cw);
-        txt(&g.p, pos2(cx, y + 18.), Align2::CENTER_CENTER, t1, f8(24.), c.tx);
-        txt(&g.p, pos2(cx, y + 38. + 9.5), Align2::CENTER_CENTER, t2, f4(15.), c.mu);
+        txt(&g.p, pos2(cx, y + 18.), Align2::CENTER_CENTER, t1, f8(24.), fade(c.tx, fa));
+        txt(&g.p, pos2(cx, y + 38. + 9.5), Align2::CENTER_CENTER, t2, f4(15.), fade(c.mu, fa));
         y += 57. + gap;
 
         // seek
         let tr = Rect::from_min_size(pos2(x0, y), vec2(cw, 36.));
         let shown = self.seeking.unwrap_or_else(|| self.pos());
-        g.range(tr, frac(shown));
+        let dur = dur.max(shown);
+        let frac = if dur > 0. { (shown / dur).clamp(0., 1.) } else { 0. };
+        g.range(tr, frac);
         txt(&g.p, pos2(x0, y + 34. + 8.5), Align2::LEFT_CENTER, fmt(shown), f4(14.), c.mu);
         txt(&g.p, pos2(x1, y + 34. + 8.5), Align2::RIGHT_CENTER, fmt(dur), f4(14.), c.mu);
         let resp = ui.interact(tr, Id::new("seek"), Sense::click_and_drag());
@@ -1649,35 +1882,41 @@ impl App {
         y += 51. + gap;
 
         // controls
-        let ws = [42., 52., 74., 52., 42.];
+        let ws = [46., 58., 80., 58., 46.];
         let sp = (cw - ws.iter().sum::<f32>()) / 4.;
-        let cy = y + 37.;
+        let cy = y + 40.;
         let mut xx = x0;
         let mut rs = [Rect::NOTHING; 5];
         for (i, wd) in ws.iter().enumerate() {
             rs[i] = Rect::from_center_size(pos2(xx + wd / 2., cy), vec2(*wd, *wd));
             xx += wd + sp;
         }
-        if self.shuf { g.accent(rs[0], 21., true) } else { g.glass(rs[0], 21., 1.) }
-        icon(&g.p, "shuf", rs[0].center(), 22., if self.shuf { c.acon } else { c.tx });
-        g.glass(rs[1], 26., 1.);
-        icon(&g.p, "prev", rs[1].center(), 22., c.tx);
+        let ps = [g.press("c0", rs[0], true), g.press("c1", rs[1], true), g.press("c2", rs[2], true), g.press("c3", rs[3], true), g.press("c4", rs[4], true)];
+        if self.shuf { g.accent(rs[0], 23., true) } else { g.glass(rs[0], 23., 1.) }
+        g.pressfx(rs[0], 23., ps[0]);
+        icon(&g.p, "shuf", rs[0].center(), 24. * ps[0], if self.shuf { c.acon } else { c.tx });
+        g.glass(rs[1], 29., 1.);
+        g.pressfx(rs[1], 29., ps[1]);
+        icon(&g.p, "prev", rs[1].center(), 24. * ps[1], c.tx);
         if now < self.fx_until {
             let t = e_out((((now - (self.fx_until - 5.)) % 2.2) / 2.2) as f32);
             let s = 24. * t;
             if s > 0.05 {
-                g.p.circle_stroke(rs[2].center(), 37. + s / 2., Stroke::new(s, fade(c.glow, 1. - t)));
+                g.p.circle_stroke(rs[2].center(), 40. + s / 2., Stroke::new(s, fade(c.glow, 1. - t)));
             }
         }
         g.play_btn(rs[2]);
-        icon(&g.p, if self.playing { "pause" } else { "play" }, rs[2].center(), 30., c.acon);
-        g.glass(rs[3], 26., 1.);
-        icon(&g.p, "next", rs[3].center(), 22., c.tx);
-        if self.rep > 0 { g.accent(rs[4], 21., true) } else { g.glass(rs[4], 21., 1.) }
-        icon(&g.p, "rep", rs[4].center(), 22., if self.rep > 0 { c.acon } else { c.tx });
+        g.pressfx(rs[2], 40., ps[2]);
+        icon(&g.p, if self.playing { "pause" } else { "play" }, rs[2].center(), 34. * ps[2], c.acon);
+        g.glass(rs[3], 29., 1.);
+        g.pressfx(rs[3], 29., ps[3]);
+        icon(&g.p, "next", rs[3].center(), 24. * ps[3], c.tx);
+        if self.rep > 0 { g.accent(rs[4], 23., true) } else { g.glass(rs[4], 23., 1.) }
+        g.pressfx(rs[4], 23., ps[4]);
+        icon(&g.p, "rep", rs[4].center(), 24. * ps[4], if self.rep > 0 { c.acon } else { c.tx });
         if self.rep == 2 {
             let wd = g.p.layout_no_wrap("1".into(), f8(11.), c.acon).size().x;
-            txt(&g.p, pos2(rs[4].right() - 10. - wd / 2., rs[4].top() + 8. + 6.6), Align2::CENTER_CENTER, "1", f8(11.), c.acon);
+            txt(&g.p, pos2(rs[4].right() - 11. - wd / 2., rs[4].top() + 9. + 6.6), Align2::CENTER_CENTER, "1", f8(11.), c.acon);
         }
         if ui.interact(rs[0], Id::new("c_shuf"), Sense::click()).clicked() {
             self.shuf = !self.shuf;
@@ -1693,23 +1932,6 @@ impl App {
         }
         if ui.interact(rs[4], Id::new("c_rep"), Sense::click()).clicked() {
             self.rep = (self.rep + 1) % 3;
-        }
-        y += 74. + gap;
-
-        // volume
-        let vw = cw * 0.78;
-        let vx = cx - vw / 2.;
-        icon(&g.p, "vol", pos2(vx + 10., y + 18.), 20., c.mu);
-        let vl = Rect::from_min_size(pos2(vx + 30., y), vec2(vw - 30., 36.));
-        g.range(vl, self.vol);
-        let vr = ui.interact(vl, Id::new("vol"), Sense::click_and_drag());
-        if let Some(pp) = vr.interact_pointer_pos() {
-            if vr.dragged() || vr.clicked() {
-                self.vol = ((pp.x - vl.left() - 10.) / (vl.width() - 20.)).clamp(0., 1.);
-                if let Some(a) = self.audio.as_ref() {
-                    a.set_volume(self.vol);
-                }
-            }
         }
     }
 
@@ -1735,7 +1957,7 @@ impl App {
         txt(&g.p, pos2(sx + wa_, py), Align2::LEFT_CENTER, "Rust", f8(16.), fade(c.tx, a));
         txt(&g.p, pos2(cx, py + 30.4), Align2::CENTER_CENTER, "Fast, light and powerful", f4(16.), fade(c.tx, a));
         let bar = Rect::from_min_size(pos2(cx - 100., top + 282.78), vec2(200., 6.));
-        g.p.rect_filled(bar, 3., fade(rgba(0x808080, 0.28), a));
+        g.p.rect_filled(bar, 3., fade(c.track, a));
         let fw = 200. * bez(0.3, 0.7, 0.2, 1., (st / 1.9).min(1.));
         if fw > 0.5 {
             let fr = Rect::from_min_size(bar.min, vec2(fw, 6.));
@@ -1757,9 +1979,12 @@ impl eframe::App for App {
         }
         let t0 = *self.t0.get_or_insert(now);
         let dt = (now - self.now).clamp(0., 0.1) as f32;
+        self.dt = dt;
         self.now = now;
         while let Ok(v) = self.rx.try_recv() {
             self.songs = v;
+            self.cov.clear();
+            self.list_t = now.max(1.7);
         }
         if self.playing && self.audio.as_ref().map_or(false, |a| a.done()) {
             if self.rep == 2 { self.play_index(self.cur) } else { self.next(true) }
@@ -1784,6 +2009,9 @@ impl eframe::App for App {
         }
         let th = (self.dark, self.pal);
         if self.last_theme != Some(th) {
+            if self.last_theme.is_some() {
+                save_settings(&self.cfg_path, self.dark, self.pal);
+            }
             self.last_theme = Some(th);
             let c = theme(self.dark, self.pal);
             ctx.set_visuals(if self.dark { Visuals::dark() } else { Visuals::light() });
@@ -1928,8 +2156,9 @@ impl App {
         if let Some(v) = g("VELORA_PAL") {
             self.pal = match v.as_str() {
                 "amber" => Pal::Amber,
-                "pearl" => Pal::Pearl,
-                _ => Pal::Sky,
+                "blue" => Pal::Sky,
+                "green" => Pal::Green,
+                _ => Pal::Pearl,
             };
         }
         if let Some(v) = g("VELORA_INSETS") {
