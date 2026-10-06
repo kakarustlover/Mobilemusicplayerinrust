@@ -28,6 +28,7 @@ type Host = ();
 static F_REG: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 static F_SEMI: &[u8] = include_bytes!("../assets/fonts/Inter-SemiBold.ttf");
 static F_XBOLD: &[u8] = include_bytes!("../assets/fonts/Inter-ExtraBold.ttf");
+static F_VAZIR: &[u8] = include_bytes!("../assets/fonts/Vazirmatn-Regular.ttf");
 
 const APP: &str = "Velora";
 
@@ -40,11 +41,19 @@ fn android_main(app: AndroidApp) {
         android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag(APP),
     );
     info!("boot: Android");
-    let opts = eframe::NativeOptions { android_app: Some(app.clone()), ..Default::default() };
+    let mut opts = eframe::NativeOptions::default();
+    {
+        use winit::platform::android::EventLoopBuilderExtAndroid;
+        let a = app.clone();
+        opts.event_loop_builder = Some(Box::new(move |b| {
+            b.with_android_app(a.clone());
+        }));
+    }
     start(opts, app);
 }
 
 fn start(opts: eframe::NativeOptions, host: Host) {
+    init_logging();
     let res = eframe::run_native(APP, opts, Box::new(move |cc| {
         Ok(Box::new(App::new(cc, host)) as Box<dyn eframe::App>)
     }));
@@ -105,13 +114,14 @@ fn install_fonts(ctx: &Context) {
     fd.font_data.insert("inter4".into(), FontData::from_static(F_REG));
     fd.font_data.insert("inter6".into(), FontData::from_static(F_SEMI));
     fd.font_data.insert("inter8".into(), FontData::from_static(F_XBOLD));
+    fd.font_data.insert("vazir".into(), FontData::from_static(F_VAZIR));
     let fb: Vec<String> = fd.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     for name in ["inter4", "inter6", "inter8"] {
-        let mut v = vec![name.to_string()];
+        let mut v = vec![name.to_string(), "vazir".to_string()];
         v.extend(fb.iter().cloned());
         fd.families.insert(FontFamily::Name(name.into()), v);
     }
-    let mut prop = vec!["inter4".to_string()];
+    let mut prop = vec!["inter4".to_string(), "vazir".to_string()];
     prop.extend(fb);
     fd.families.insert(FontFamily::Proportional, prop);
     ctx.set_fonts(fd);
@@ -179,6 +189,10 @@ fn lin_t(rect: Rect, deg: f32, p: Pos2) -> f32 {
 fn fmt(s: f32) -> String {
     let s = s.max(0.).round() as u64;
     format!("{}:{:02}", s / 60, s % 60)
+}
+/// f32-typed stroke constructor (keeps the compiler from f64-literal fallback warnings).
+fn sk(w: f32, c: Color32) -> Stroke {
+    Stroke::new(w, c)
 }
 
 fn theme(dark: bool, pal: Pal) -> C {
@@ -338,7 +352,7 @@ fn glass(p: &Painter, rect: Rect, r: f32, c: C, a: f32) {
         }
         wa(al.min(1.))
     });
-    p.rect_stroke(rect.shrink(0.5), (r - 0.5).max(0.), Stroke::new(1., fade(c.gb, a)));
+    p.rect_stroke(rect.shrink(0.5), (r - 0.5).max(0.), sk(1.0, fade(c.gb, a)));
 }
 
 fn accent(p: &Painter, rect: Rect, r: f32, c: C) {
@@ -348,7 +362,7 @@ fn accent(p: &Painter, rect: Rect, r: f32, c: C) {
         let ty = (q.y - rect.top()) / rect.height().max(1.);
         mix(base, Color32::WHITE, if ty < 0.5 { 0.30 * (1. - ty / 0.5) } else { 0. })
     });
-    p.rect_stroke(rect.shrink(0.5), (r - 0.5).max(0.), Stroke::new(1., wa(0.55)));
+    p.rect_stroke(rect.shrink(0.5), (r - 0.5).max(0.), sk(1.0, wa(0.55)));
 }
 
 fn disc(p: &Painter, ce: Pos2, d: f32, rot: f32, c: C) {
@@ -372,11 +386,11 @@ fn disc(p: &Painter, ce: Pos2, d: f32, rot: f32, c: C) {
     p.add(Shape::mesh(m));
     let mut rr = d * 0.16 + 4.;
     while rr < d / 2. - 3. {
-        p.circle_stroke(ce, rr, Stroke::new(1., wa(0.10)));
+        p.circle_stroke(ce, rr, sk(1.0, wa(0.10)));
         rr += 7.;
     }
     p.circle_filled(ce, d * 0.13, c.bg2);
-    p.circle_stroke(ce, d * 0.13 + 1., Stroke::new(2., wa(0.7)));
+    p.circle_stroke(ce, d * 0.13 + 1., sk(2.0, wa(0.7)));
 }
 
 fn tile(p: &Painter, rect: Rect, r: f32, c: C, letter: Option<char>) {
@@ -431,7 +445,9 @@ fn icon(p: &Painter, k: &str, ce: Pos2, size: f32, col: Color32) {
         dot(a);
         dot(b);
     };
-    let poly = |v: Vec<Pos2>| p.add(Shape::convex_polygon(v, col, Stroke::NONE));
+    let poly = |v: Vec<Pos2>| {
+        p.add(Shape::convex_polygon(v, col, Stroke::NONE));
+    };
     let path = |v: Vec<Pos2>| {
         p.add(Shape::line(v.clone(), sw));
         for q in v {
@@ -705,22 +721,36 @@ mod audio {
 }
 use audio::Audio;
 
-// ---------------------------------------------------------------- android insets (JNI)
+// ---------------------------------------------------------------- android insets (JNI via ndk-context)
 
 #[cfg(target_os = "android")]
-fn jobj(v: jni::errors::Result<jni::objects::JValueOwned<'_>>) -> Option<jni::objects::JObject<'_>> {
-    v.and_then(|x| x.l()).ok()
-}
+fn query_insets(ppp: f32) -> (f32, f32) {
+    use jni::objects::JObject;
 
-#[cfg(target_os = "android")]
-fn query_insets(app: &AndroidApp, ppp: f32) -> (f32, f32) {
-    let Ok(env) = app.vm().attach_current_thread() else { return (0., 0.); };
-    let Some(win) = jobj(env.call_method(app.activity(), "getWindow", "()Landroid/view/Window;", &[])) else { return (0., 0.); };
-    let Some(dv) = jobj(env.call_method(&win, "getDecorView", "()Landroid/view/View;", &[])) else { return (0., 0.); };
-    let Some(ins) = jobj(env.call_method(&dv, "getRootWindowInsets", "()Landroid/view/WindowInsets;", &[])) else { return (0., 0.); };
-    let top = env.call_method(&ins, "getSystemWindowInsetTop", "()I", &[]).and_then(|v| v.i()).unwrap_or(0);
-    let bot = env.call_method(&ins, "getSystemWindowInsetBottom", "()I", &[]).and_then(|v| v.i()).unwrap_or(0);
-    (((top as f32) / ppp).max(0.), ((bot as f32) / ppp).max(0.))
+    let read = || -> Option<(i32, i32)> {
+        let cctx = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(cctx.vm().cast()) }.ok()?;
+        let mut env = vm.attach_current_thread().ok()?;
+        let act = unsafe { JObject::from_raw(cctx.context().cast()) };
+        env.push_local_frame(16).ok()?;
+        let mut res: Option<(i32, i32)> = None;
+        let ok = (|| -> Option<()> {
+            let win = env.call_method(&act, "getWindow", "()Landroid/view/Window;", &[]).ok()?.l().ok()?;
+            let dv = env.call_method(&win, "getDecorView", "()Landroid/view/View;", &[]).ok()?.l().ok()?;
+            let ins = env.call_method(&dv, "getRootWindowInsets", "()Landroid/view/WindowInsets;", &[]).ok()?.l().ok()?;
+            let top = env.call_method(&ins, "getSystemWindowInsetTop", "()I", &[]).ok()?.i().ok()?;
+            let bot = env.call_method(&ins, "getSystemWindowInsetBottom", "()I", &[]).ok()?.i().ok()?;
+            res = Some((top, bot));
+            Some(())
+        })();
+        let _ = env.pop_local_frame(&JObject::null());
+        ok?;
+        res
+    };
+    match read() {
+        Some((top, bot)) => (((top as f32) / ppp).max(0.), ((bot as f32) / ppp).max(0.)),
+        None => (0., 0.),
+    }
 }
 
 // ---------------------------------------------------------------- settings
@@ -1122,7 +1152,7 @@ fn slider(ui: &mut Ui, rect: Rect, v: f32, c: C, interactive: bool) -> (f32, boo
     p.rect_filled(tr, 2.5, c.track);
     let mut nv = v;
     if interactive {
-        if let Some(pp) = resp.interact_pos() {
+        if let Some(pp) = resp.interact_pointer_pos() {
             if resp.dragged() || resp.clicked() {
                 nv = ((pp.x - rect.left()) / rect.width().max(1.)).clamp(0., 1.);
             }
@@ -1136,7 +1166,7 @@ fn slider(ui: &mut Ui, rect: Rect, v: f32, c: C, interactive: bool) -> (f32, boo
     let trect = Rect::from_center_size(pos2(x, t), vec2(18., 18.));
     soft_shadow(p, trect, 9., 1.5, 5., c.shb, 0.25);
     p.circle_filled(pos2(x, t), 9., Color32::WHITE);
-    p.circle_stroke(pos2(x, t), 7.2, Stroke::new(2., c.ac));
+    p.circle_stroke(pos2(x, t), 7.2, sk(2.0, c.ac));
     (nv, resp.dragged(), resp.drag_stopped() || resp.clicked())
 }
 
@@ -1155,7 +1185,8 @@ fn blobs(p: &Painter, area: Rect, now: f64, c: C) {
 
 fn empty_state(ui: &mut Ui, c: C) {
     let w = ui.available_width();
-    let (_, rect) = ui.allocate_exact_size(vec2(w, 170.), Sense::hover());
+    let resp = ui.allocate_response(vec2(w, 170.), Sense::hover());
+    let rect = resp.rect;
     let p = ui.painter();
     icon(p, "note", pos2(rect.center().x, rect.center().y - 18.), 36., fade(c.mu, 0.9));
     txt(p, pos2(rect.center().x, rect.center().y + 24.), Align2::CENTER_CENTER,
@@ -1264,7 +1295,8 @@ impl App {
         };
         let cov = self.covers.get(&i).map(|t| t.id());
         let is_cur = i == self.cur;
-        let (resp, r) = ui.allocate_exact_size(vec2(w, 66.), sense(on));
+        let resp = ui.allocate_response(vec2(w, 66.), sense(on));
+        let r = resp.rect;
         let p = ui.painter();
         if is_cur {
             p.rect_filled(r, 16., c.hl);
@@ -1327,7 +1359,8 @@ impl App {
                         } else {
                             (self.albums[di].0.clone(), self.albums[di].1.clone())
                         };
-                        let (hdr, hr) = ui.allocate_exact_size(vec2(w, 42.), sense(on));
+                        let hdr = ui.allocate_response(vec2(w, 42.), sense(on));
+                        let hr = hdr.rect;
                         let p = ui.painter();
                         icon(p, "back", pos2(hr.left() + 14., hr.center().y), 18., c.tx);
                         txt(p, pos2(hr.left() + 34., hr.center().y), Align2::LEFT_CENTER,
@@ -1354,7 +1387,8 @@ impl App {
                         let cw = (w - 10.) / 2.;
                         for chunk in cards.chunks(2) {
                             for (name, gi, cov) in chunk {
-                                let (resp, r) = ui.allocate_exact_size(vec2(cw, 158.), sense(on));
+                                let resp = ui.allocate_response(vec2(cw, 158.), sense(on));
+                                let r = resp.rect;
                                 let p = ui.painter();
                                 glass(p, r, 18., c, 1.);
                                 let tr = Rect::from_center_size(pos2(r.center().x, r.top() + 50.), vec2(72., 72.));
@@ -1373,11 +1407,11 @@ impl App {
                                 }
                             }
                             if chunk.len() == 1 {
-                                ui.allocate_exact_size(vec2(cw, 0.001), Sense::hover());
+                                ui.allocate_response(vec2(cw, 0.001), Sense::hover());
                             }
                         }
                     }
-                    ui.allocate_exact_size(vec2(w, 16.), Sense::hover());
+                    ui.allocate_response(vec2(w, 16.), Sense::hover());
                 });
             }
         }
@@ -1462,7 +1496,7 @@ impl App {
         match self.cur_cover_id() {
             Some(id) => {
                 tex_round(&p, id, crect, 30.);
-                p.rect_stroke(crect.shrink(0.5), 29.5, Stroke::new(1., c.gb));
+                p.rect_stroke(crect.shrink(0.5), 29.5, sk(1.0, c.gb));
             }
             None => disc(&p, cc, cs, self.rot, c),
         }
@@ -1555,7 +1589,7 @@ impl App {
         let card = Rect::from_min_size(pos2(sr.right() - 20. - cw, area.top() + 56.), vec2(cw, 150.));
         soft_shadow(&p, card, 20., 6., 16., c.shb, c.sh_a);
         grad(&p, card, 20., &|_| c.sheet);
-        p.rect_stroke(card.shrink(0.5), 19.5, Stroke::new(1., c.gb));
+        p.rect_stroke(card.shrink(0.5), 19.5, sk(1.0, c.gb));
         txt(&p, pos2(card.left() + 18., card.top() + 26.), Align2::LEFT_CENTER, "Appearance", f8(15.), c.tx);
 
         let tog = Rect::from_center_size(pos2(card.right() - 42., card.top() + 60.), vec2(46., 26.));
@@ -1577,7 +1611,7 @@ impl App {
             let rr = ui.allocate_rect(Rect::from_center_size(ce, vec2(36., 36.)), Sense::click());
             p.circle_filled(ce, 13., theme(self.dark, pl).k2);
             if pl == self.pal {
-                p.circle_stroke(ce, 16.5, Stroke::new(2., c.ac));
+                p.circle_stroke(ce, 16.5, sk(2.0, c.ac));
             }
             if rr.clicked() {
                 self.pal = pl;
@@ -1625,7 +1659,7 @@ impl eframe::App for App {
         {
             if self.now > self.inset_poll + 2. {
                 self.inset_poll = self.now;
-                let ni = query_insets(&self.host, ctx.pixels_per_point());
+                let ni = query_insets(ctx.pixels_per_point());
                 if (ni.0 - self.insets.0).abs() > 0.5 || (ni.1 - self.insets.1).abs() > 0.5 {
                     info!("insets: top={:.0} bottom={:.0}", ni.0, ni.1);
                     self.insets = ni;
