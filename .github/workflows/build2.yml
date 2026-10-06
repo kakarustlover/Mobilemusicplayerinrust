@@ -27,7 +27,6 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # فونت‌ها اگر در ریپو نباشند دانلود می‌شوند (Inter + Vazirmatn برای متن فارسی)
       - name: Fetch fonts (skip if already in repo)
         run: |
           mkdir -p assets/fonts
@@ -51,6 +50,15 @@ jobs:
 
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
+
+      # ✅ ساخت کلید امضا — این استپ جدیده که خطای keystore رو حل می‌کنه
+      - name: Generate signing keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore velora.keystore -alias velora \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass velora123 -keypass velora123 \
+            -dname "CN=Velora, OU=Dev, O=Velora, C=IR"
 
       - name: Build release APK
         run: cargo apk build --release
