@@ -743,7 +743,7 @@ fn query_insets(ppp: f32) -> (f32, f32) {
             res = Some((top, bot));
             Some(())
         })();
-        let _ = env.pop_local_frame(&JObject::null());
+        let _ = unsafe { env.pop_local_frame(&JObject::null()) };
         ok?;
         res
     };
