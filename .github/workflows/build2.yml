@@ -29,18 +29,19 @@ jobs:
 
       # ✅ FIX: اکشن setup-android کلاً حذف شد — روی RUNNER گیت‌هاب SDK از قبل نصبه.
       # مستقیم NDK و پلتفرم رو خودمون نصب می‌کنیم.
-      - name: Install NDK + platform
+            - name: Install NDK + platform
         run: |
           set -e
           SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           SDKM="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -1)"
           echo "sdkmanager: $SDKM"
           yes | "$SDKM" --licenses > /dev/null || true
-          "$SDKM" --install "ndk;27.0.12077973" "platforms;android-34" "build-tools;34.0.0"
-          echo "ANDROID_NDK_ROOT=$SDK/ndk/27.0.12077973" >> "$GITHUB_ENV"
-          echo "NDK_HOME=$SDK/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          "$SDKM" --install "ndk;26.3.11579264" "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_NDK_ROOT=$SDK/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$SDK/ndk/26.3.11579264" >> "$GITHUB_ENV"
 
       - name: Install cargo-apk
+        run: cargo install cargo-apk --locked
         run: |
           set -e
           VER=v0.17.0
