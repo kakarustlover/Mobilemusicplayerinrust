@@ -1,76 +1,67 @@
-name: Build Android APK (build2)
+name: Build Velora APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
-  apk:
-    name: Velora APK (aarch64)
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Rust (stable) + Android target
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK and NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34 build-tools;34.0.0 ndk;26.3.11579264"
+
+      - name: Set NDK path
+        run: |
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
+
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Fetch fonts (skip if already in repo)
-        run: |
-          mkdir -p assets/fonts
-          base="https://cdn.jsdelivr.net/fontsource/fonts"
-          [ -f assets/fonts/Inter-Regular.ttf ]   || curl -fsSL -o assets/fonts/Inter-Regular.ttf   "$base/inter@latest/latin-400-normal.ttf"
-          [ -f assets/fonts/Inter-SemiBold.ttf ]  || curl -fsSL -o assets/fonts/Inter-SemiBold.ttf  "$base/inter@latest/latin-600-normal.ttf"
-          [ -f assets/fonts/Inter-ExtraBold.ttf ] || curl -fsSL -o assets/fonts/Inter-ExtraBold.ttf "$base/inter@latest/latin-800-normal.ttf"
-          [ -f assets/fonts/Vazirmatn-Regular.ttf ] || curl -fsSL -o assets/fonts/Vazirmatn-Regular.ttf "$base/vazirmatn@latest/arabic-400-normal.ttf"
-          ls -la assets/fonts
-
-      - name: Install NDK + platform
-        run: |
-          set -e
-          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          SDKM="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -1)"
-          echo "sdkmanager: $SDKM"
-          yes | "$SDKM" --licenses > /dev/null || true
-          "$SDKM" --install "ndk;26.3.11579264" "platforms;android-34" "build-tools;34.0.0"
-          echo "ANDROID_NDK_ROOT=$SDK/ndk/26.3.11579264" >> "$GITHUB_ENV"
-          echo "NDK_HOME=$SDK/ndk/26.3.11579264" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
 
-      # ✅ ساخت کلید امضا — این استپ جدیده که خطای keystore رو حل می‌کنه
-      - name: Generate signing keystore
+      - name: Create debug keystore
         run: |
-          keytool -genkeypair -v \
-            -keystore velora.keystore -alias velora \
+          mkdir -p $HOME/.android
+          keytool -genkey -v -keystore $HOME/.android/debug.keystore \
+            -storepass android -keypass android -alias androiddebugkey \
             -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass velora123 -keypass velora123 \
-            -dname "CN=Velora, OU=Dev, O=Velora, C=IR"
+            -dname "CN=Android Debug,O=Android,C=US"
+          # cargo-apk does not expand $HOME in Cargo.toml and reads the path
+          # relative to the project folder, so place a copy at that literal path.
+          mkdir -p '$HOME/.android'
+          cp $HOME/.android/debug.keystore '$HOME/.android/debug.keystore'
+
+      - name: Download Inter fonts
+        run: |
+          mkdir -p assets/fonts
+          curl -fL -o inter.zip https://github.com/rsms/inter/releases/download/v4.0/Inter-4.0.zip
+          unzip -j -o inter.zip "extras/ttf/Inter-Regular.ttf" "extras/ttf/Inter-SemiBold.ttf" "extras/ttf/Inter-ExtraBold.ttf" -d assets/fonts
+          ls -l assets/fonts
 
       - name: Build release APK
+        env:
+          # Link the C++ ABI runtime statically so libvelora.so finds
+          # symbols like __cxa_pure_virtual at runtime on the phone.
+          RUSTFLAGS: "-C link-arg=-lc++abi"
         run: cargo apk build --release
 
-      - name: Collect APK
-        run: |
-          find target/release/apk -name "*.apk" -exec cp {} Velora.apk \;
-          ls -la Velora.apk
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: Velora-APK
-          path: Velora.apk
-          if-no-files-found: error
+          name: Velora-apk
+          path: target/release/apk/*.apk
