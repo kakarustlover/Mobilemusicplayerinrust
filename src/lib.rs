@@ -7,7 +7,7 @@
 use eframe::egui::{
     self, pos2, vec2, Align2, CentralPanel, Color32, ColorImage, Context, FontData,
     FontDefinitions, FontFamily, FontId, Id, Mesh, Painter, Pos2, Rect, ScrollArea, Sense, Shape,
-    Stroke, TextEdit, TextureHandle, TextureId, TextureOptions, Ui, vec2,
+    Stroke, TextEdit, TextureHandle, TextureId, TextureOptions, Ui, Vec2,
 };
 use lofty::prelude::*;
 use log::{error, info, warn};
