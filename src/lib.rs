@@ -7,7 +7,7 @@
 use eframe::egui::{
     self, pos2, vec2, Align2, CentralPanel, Color32, ColorImage, Context, FontData,
     FontDefinitions, FontFamily, FontId, Id, Mesh, Painter, Pos2, Rect, ScrollArea, Sense, Shape,
-    Stroke, TextEdit, TextureHandle, TextureId, TextureOptions, Ui,
+    Stroke, TextEdit, TextureHandle, TextureId, TextureOptions, Ui, vec2,
 };
 use lofty::prelude::*;
 use log::{error, info, warn};
@@ -332,7 +332,7 @@ fn crescent(p: &Painter, rect: Rect, r: f32, off: f32, col: Color32, top: bool) 
         let a = pts[(i + n - 1) % n];
         let b = pts[(i + 1) % n];
         let t = b - a;
-        vec2(t.y, -t.x).normalized_or_zero()
+        vec2(t.y, -t.x).normalized()
     };
     let depth = |i: usize| -> f32 {
         let v = nr(i);
