@@ -1,0 +1,5 @@
+[application]
+
+[bundle]
+identifier = "com.velora.player"
+publisher = "Velora"
