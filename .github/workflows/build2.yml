@@ -1,4 +1,4 @@
-name: Build Velora APK
+name: Build Velora APK (Dioxus)
 
 on:
   push:
@@ -19,12 +19,13 @@ jobs:
       - name: Setup Android SDK and NDK
         uses: android-actions/setup-android@v3
         with:
-          packages: "platforms;android-34 build-tools;34.0.0 ndk;26.3.11579264"
+          packages: "platforms;android-34 platforms;android-35 build-tools;34.0.0 build-tools;35.0.0 ndk;26.3.11579264 cmake;3.22.1"
 
-      - name: Set NDK path
+      - name: Set Android paths
         run: |
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
+          echo "NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -32,20 +33,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-apk
-        run: cargo install cargo-apk --locked
-
-      - name: Create debug keystore
+      - name: Install dx (Dioxus CLI)
         run: |
-          mkdir -p $HOME/.android
-          keytool -genkey -v -keystore $HOME/.android/debug.keystore \
-            -storepass android -keypass android -alias androiddebugkey \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-          # cargo-apk does not expand $HOME in Cargo.toml and reads the path
-          # relative to the project folder, so place a copy at that literal path.
-          mkdir -p '$HOME/.android'
-          cp $HOME/.android/debug.keystore '$HOME/.android/debug.keystore'
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall "dioxus-cli@^0.7" --no-confirm --force || cargo install dioxus-cli --version "^0.7" --locked
+          dx --version
 
       - name: Download Inter fonts
         run: |
@@ -54,14 +46,32 @@ jobs:
           unzip -j -o inter.zip "extras/ttf/Inter-Regular.ttf" "extras/ttf/Inter-SemiBold.ttf" "extras/ttf/Inter-ExtraBold.ttf" -d assets/fonts
           ls -l assets/fonts
 
-      - name: Build release APK
-        env:
-          # Link the C++ ABI runtime statically so libvelora.so finds
-          # symbols like __cxa_pure_virtual at runtime on the phone.
-          RUSTFLAGS: "-C link-arg=-lc++abi"
-        run: cargo apk build --release
+      - name: Build with dx (creates the Android project)
+        continue-on-error: true
+        run: dx build --android --target aarch64-linux-android
+
+      - name: Add permissions and build the APK
+        run: |
+          MF=$(find target/dx -path '*src/main/AndroidManifest.xml' | head -1)
+          echo "Manifest: $MF"
+          test -n "$MF"
+          for P in READ_MEDIA_AUDIO READ_EXTERNAL_STORAGE WAKE_LOCK; do
+            grep -q "android.permission.$P" "$MF" || sed -i "0,/<application/s//<uses-permission android:name=\"android.permission.$P\" \/>\n    <application/" "$MF"
+          done
+          sed -i 's/android:label="[^"]*"/android:label="Velora"/' "$MF"
+          cat "$MF"
+          GRADLE_DIR=$(dirname "$(find target/dx -name gradlew | head -1)")
+          cd "$GRADLE_DIR"
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Collect APK
+        run: |
+          mkdir -p apk-out
+          find target/dx -name "*.apk" -path "*debug*" -exec cp {} apk-out/Velora.apk \; || true
+          ls -l apk-out
 
       - uses: actions/upload-artifact@v4
         with:
           name: Velora-apk
-          path: target/release/apk/*.apk
+          path: apk-out/*.apk
