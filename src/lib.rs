@@ -323,30 +323,37 @@ fn tex_round(p: &Painter, id: TextureId, rect: Rect, r: f32) {
 fn crescent(p: &Painter, rect: Rect, r: f32, off: f32, col: Color32, top: bool) {
     let (rect, r) = (rect.shrink(1.), (r - 1.).max(0.));
     let pts = outline_pts(rect, r);
-    let mut m = Mesh::default();
     let n = pts.len();
+    if n < 3 || off <= 0.01 {
+        return;
+    }
+    // outward normal at each outline point (points run clockwise on screen)
+    let nr = |i: usize| -> Vec2 {
+        let a = pts[(i + n - 1) % n];
+        let b = pts[(i + 1) % n];
+        let t = b - a;
+        vec2(t.y, -t.x).normalized_or_zero()
+    };
+    let depth = |i: usize| -> f32 {
+        let v = nr(i);
+        let f = if top { -v.y } else { v.y };
+        (off * f.max(0.)).max(0.)
+    };
+    let mut m = Mesh::default();
     for i in 0..n {
-        let (q, nr) = pts[i];
-        let th = off * if top { (-nr.y).max(0.) } else { (nr.y).max(0.) };
+        let q = pts[i];
+        let d = depth(i);
         m.colored_vertex(q, col);
-        m.colored_vertex(q - nr * th, col);
+        m.colored_vertex(q - nr(i) * d, col);
     }
     for i in 0..n {
-        let (q, nr) = pts[i];
-        let th = off * if top { (-nr.y).max(0.) } else { (nr.y).max(0.) };
-        if th <= 0.01 {
-            continue;
-        }
         let j = (i + 1) % n;
-        let (q2, nr2) = pts[j];
-        let th2 = off * if top { (-nr2.y).max(0.) } else { (nr2.y).max(0.) };
-        if th2 <= 0.01 {
+        if depth(i) <= 0.01 && depth(j) <= 0.01 {
             continue;
         }
-        let (a, b, c2, d) = (2 * i as u32, 2 * i as u32 + 1, 2 * j as u32, 2 * j as u32 + 1);
-        let _ = (q, q2);
-        m.add_triangle(a, b, c2);
-        m.add_triangle(b, d, c2);
+        let (a, b, c, d) = (2 * i as u32, 2 * i as u32 + 1, 2 * j as u32, 2 * j as u32 + 1);
+        m.add_triangle(a, b, c);
+        m.add_triangle(b, d, c);
     }
     p.add(Shape::mesh(m));
 }
